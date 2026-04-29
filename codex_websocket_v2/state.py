@@ -51,3 +51,7 @@ class Task:
     request_rpc_id: Any = None
     request_type: Optional[str] = None
     request_payload: Optional[Dict[str, Any]] = field(default=None)
+
+    # Buffer for "off" verbose level — holds the most recent item, flushed at turn/completed.
+    last_item: Any = None
+    last_item_type: str = ""

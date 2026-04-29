@@ -43,6 +43,21 @@ def set_main_loop(loop: Optional[asyncio.AbstractEventLoop]) -> None:
     _MAIN_LOOP = loop
 
 
+def _try_capture_main_loop() -> None:
+    """Lazy capture of the gateway event loop if ``set_main_loop`` wasn't called.
+
+    This covers edge cases where ``register()`` ran outside the async context
+    (e.g. early import via ``model_tools``) and ``_MAIN_LOOP`` stayed None.
+    """
+    global _MAIN_LOOP
+    if _MAIN_LOOP is not None:
+        return
+    try:
+        _MAIN_LOOP = asyncio.get_running_loop()
+    except RuntimeError:
+        pass
+
+
 async def _send_via_main_loop(coro_factory) -> None:
     """Schedule ``coro_factory()`` on the hermes main loop and await its result.
 
@@ -55,9 +70,17 @@ async def _send_via_main_loop(coro_factory) -> None:
         current = None
 
     if _MAIN_LOOP is None or current is _MAIN_LOOP or not _MAIN_LOOP.is_running():
+        logger.info(
+            "codex notify: direct send "
+            "(main_loop_set=%s, on_main_loop=%s, main_loop_running=%s)",
+            _MAIN_LOOP is not None,
+            current is _MAIN_LOOP if _MAIN_LOOP is not None else None,
+            _MAIN_LOOP.is_running() if _MAIN_LOOP is not None else None,
+        )
         await coro_factory()
         return
 
+    logger.info("codex notify: dispatching to main loop via run_coroutine_threadsafe")
     future = asyncio.run_coroutine_threadsafe(coro_factory(), _MAIN_LOOP)
     # wrap_future bridges the concurrent.futures.Future to the calling loop.
     await asyncio.wrap_future(future)
@@ -73,6 +96,8 @@ async def notify_user(target: Optional[TaskTarget], message: str) -> None:
         logger.info("codex notify (no target): %s", message[:200])
         return
     try:
+        _try_capture_main_loop()
+
         from gateway.config import load_gateway_config, Platform
         from tools.send_message_tool import _send_to_platform
 

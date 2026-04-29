@@ -59,7 +59,7 @@ class CodexSession:
 
         self.default_model: str = DEFAULT_MODEL
         self.mode: str = "default"          # "plan" | "default"
-        self.verbose: bool = False
+        self.verbose: str = "off"  # "off" | "mid" | "on"
         self.tasks: Dict[str, Task] = {}    # task_id → Task
         self._provider: ProviderInfo = ProviderInfo()
 
@@ -449,11 +449,13 @@ class CodexSession:
         self.mode = mode
         return ok(mode=mode)
 
-    def get_verbose(self) -> bool:
+    def get_verbose(self) -> str:
         return self.verbose
 
-    def set_verbose(self, on: bool) -> Result:
-        self.verbose = bool(on)
+    def set_verbose(self, level: str) -> Result:
+        if level not in ("off", "mid", "on"):
+            return err(f"unknown verbose level '{level}'; use off/mid/on")
+        self.verbose = level
         return ok(verbose=self.verbose)
 
     def get_status(self) -> Result:

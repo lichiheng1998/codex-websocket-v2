@@ -224,7 +224,7 @@ def codex_session(args: dict, **kwargs: Any) -> str:
             "total_threads": result["total_threads"],
             "model": result["model"],
             "mode": result["mode"],
-            "verbose": result["verbose"],
+            "verbose": result["verbose"],  # "off" | "mid" | "on"
         }, ensure_ascii=False)
 
     if action == "plan_get":
@@ -252,9 +252,10 @@ def codex_session(args: dict, **kwargs: Any) -> str:
         }, ensure_ascii=False)
 
     if action == "verbose_set":
-        if "enabled" not in args:
-            return _error("enabled is required for verbose_set")
-        result = session.set_verbose(bool(args["enabled"]))
+        level = (args.get("level") or "").strip()
+        if not level:
+            return _error("level is required for verbose_set (off/mid/on)")
+        result = session.set_verbose(level)
         if not result.get("ok"):
             return _error(result.get("error", "unknown error"))
         return json.dumps({

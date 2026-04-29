@@ -125,8 +125,12 @@ CODEX_SESSION = {
         "'status' returns a snapshot (connection, active_tasks, total_threads, "
         "model, mode, verbose). 'plan_get'/'plan_set' read or set plan-mode "
         "(when enabled, future turns use collaborationMode=plan). "
-        "'verbose_get'/'verbose_set' read or set verbose-mode (item/completed "
-        "notifications). 'plan_set' and 'verbose_set' require enabled=true|false. "
+        "'verbose_get'/'verbose_set' read or set verbose level: "
+        "'off' (last item/completed + turn/completed), "
+        "'mid' (agentMessage + turn/completed), "
+        "'on' (all item/completed notifications). "
+        "'plan_set' requires enabled=true|false. 'verbose_set' requires level "
+        "as a string ('off'/'mid'/'on'). "
         "Mirrors /codex status / plan / verbose."
     ),
     "parameters": {
@@ -144,7 +148,12 @@ CODEX_SESSION = {
             },
             "enabled": {
                 "type": "boolean",
-                "description": "Required for plan_set / verbose_set.",
+                "description": "Required for plan_set.",
+            },
+            "level": {
+                "type": "string",
+                "enum": ["off", "mid", "on"],
+                "description": "Required for verbose_set. 'off'=last item + turn end, 'mid'=agentMessage + turn end, 'on'=all items.",
             },
         },
         "required": ["action"],

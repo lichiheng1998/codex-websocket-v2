@@ -267,11 +267,22 @@ class MessageHandler:
     async def _on_item_completed(self, task: Task, params: Any) -> None:
         item = params.item.root
         item_type = getattr(getattr(item, "type", None), "value", None) or getattr(item, "type", "")
+        level = self.session.verbose
 
-        # agentMessage (final reply) is always sent; other items need verbose on.
-        if item_type != "agentMessage" and not self.session.verbose:
+        task.last_item = item
+        task.last_item_type = item_type
+
+        if level == "off":
+            # Buffer only — flushed on turn/completed.
             return
 
+        if level == "mid":
+            # Only agentMessage is shown live; everything else stays silent.
+            if item_type == "agentMessage":
+                await self._on_agent_message(task, item)
+            return
+
+        # level == "on" — show everything immediately
         if item_type == "agentMessage":
             await self._on_agent_message(task, item)
         elif item_type == "plan":
@@ -351,6 +362,10 @@ class MessageHandler:
         turn = params.turn
         status = getattr(turn.status, "value", turn.status)
 
+        # In "off" mode: flush the buffered last item before turn/completed.
+        if self.session.verbose == "off" and task.last_item is not None:
+            await self._show_last_item(task)
+
         if status == "failed":
             error = turn.error
             msg_text = getattr(error, "message", "") or "unknown error"
@@ -365,3 +380,28 @@ class MessageHandler:
                 f"✅ Codex task `{task.task_id}` completed\n"
                 f"Continue: `/codex reply {task.task_id} <message>`",
             )
+
+    async def _show_last_item(self, task: Task) -> None:
+        """Show the buffered last item (used by 'off' verbose level)."""
+        item = task.last_item
+        item_type = task.last_item_type
+        task.last_item = None
+        task.last_item_type = ""
+        if item_type == "agentMessage":
+            await self._on_agent_message(task, item)
+        elif item_type == "plan":
+            await self._on_plan(task, item)
+        elif item_type == "commandExecution":
+            await self._on_command_execution(task, item)
+        elif item_type == "fileChange":
+            await self._on_file_change(task, item)
+        elif item_type == "webSearch":
+            await self._on_web_search(task, item)
+        elif item_type == "enteredReviewMode":
+            await self._on_entered_review_mode(task, item)
+        elif item_type == "exitedReviewMode":
+            await self._on_exited_review_mode(task, item)
+        elif item_type == "contextCompaction":
+            await self.session.notify(f"🗜️ `{task.task_id}` context compacted")
+        else:
+            logger.debug("codex handler: last item type %r ignored", item_type)

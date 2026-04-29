@@ -98,8 +98,8 @@ def _build_parser() -> argparse.ArgumentParser:
     plan_p = sub.add_parser("plan", add_help=True, help="show or toggle plan mode")
     plan_p.add_argument("toggle", nargs="?", help="'on' or 'off'; omit to query")
 
-    verbose_p = sub.add_parser("verbose", add_help=True, help="show or toggle verbose mode")
-    verbose_p.add_argument("toggle", nargs="?", help="'on' or 'off'; omit to query")
+    verbose_p = sub.add_parser("verbose", add_help=True, help="show or set verbose level")
+    verbose_p.add_argument("level", nargs="?", help="'off', 'mid', or 'on'; omit to query")
 
     sub.add_parser("status", add_help=True, help="show session status")
 
@@ -147,7 +147,7 @@ def _cmd_help() -> str:
         "  `/codex archive all` — archive all tasks in this session\n"
         "  `/codex archive allthreads` — archive every thread on the server\n"
         "  `/codex plan on|off` — toggle plan mode (this session)\n"
-        "  `/codex verbose on|off` — toggle verbose notifications (this session)\n"
+        "  `/codex verbose off|mid|on` — set verbosity (off = last item + turn end; mid = agentMessage + turn end; on = all)\n"
         "  `/codex status` — show session status"
     )
 
@@ -310,27 +310,29 @@ def _cmd_plan(toggle: Optional[str]) -> str:
     return "Plan mode `off` — future turns will use collaborationMode=default."
 
 
-def _cmd_verbose(toggle: Optional[str]) -> str:
-    if toggle is None:
+def _cmd_verbose(level: Optional[str]) -> str:
+    if level is None:
         result = _call("codex_session", {"action": "verbose_get"})
         if not result.get("ok"):
             return f"Failed: {result.get('error', 'unknown error')}"
-        state = "on" if result.get("verbose") else "off"
-        return f"Verbose mode is `{state}`."
-    normalized = toggle.strip().lower()
+        return f"Verbose level is `{result.get('verbose', 'off')}`. Options: off / mid / on"
+    normalized = level.strip().lower()
     if normalized in ("on", "true", "1", "enable", "enabled"):
-        enabled = True
+        normalized = "on"
     elif normalized in ("off", "false", "0", "disable", "disabled"):
-        enabled = False
-    else:
-        return f"Unknown toggle `{toggle}`. Use `/codex verbose on` or `/codex verbose off`."
+        normalized = "off"
+    elif normalized != "mid":
+        return f"Unknown level `{level}`. Use: `/codex verbose off|mid|on`"
 
-    result = _call("codex_session", {"action": "verbose_set", "enabled": enabled})
+    result = _call("codex_session", {"action": "verbose_set", "level": normalized})
     if not result.get("ok"):
         return f"Failed: {result.get('error', 'unknown error')}"
-    if enabled:
-        return "Verbose mode `on` — item/completed notifications will be shown."
-    return "Verbose mode `off` — only turn/completed notifications will be shown."
+    descriptions = {
+        "off": "last item/completed + turn/completed",
+        "mid": "agentMessage + turn/completed",
+        "on": "all item/completed notifications",
+    }
+    return f"Verbose `{normalized}` — {descriptions[normalized]}."
 
 
 def _cmd_reply(ns: argparse.Namespace) -> str:
@@ -362,7 +364,7 @@ def _cmd_status() -> str:
         f"• Total threads: {result['total_threads']}\n"
         f"• Default model: `{result['model']}`\n"
         f"• Mode: `{result['mode']}`\n"
-        f"• Verbose: {'on' if result['verbose'] else 'off'}"
+        f"• Verbose: `{result['verbose']}`"
     )
 
 
@@ -405,7 +407,7 @@ def handle_slash(raw_args: str) -> str:
         return _cmd_plan(ns.toggle)
 
     if ns.command == "verbose":
-        return _cmd_verbose(ns.toggle)
+        return _cmd_verbose(ns.level)
 
     if ns.command == "status":
         return _cmd_status()
