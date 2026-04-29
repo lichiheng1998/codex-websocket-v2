@@ -1,11 +1,8 @@
-"""Process-level registry of CodexSession instances, keyed by hermes session_key.
+"""Process-level registry of CodexSession instances, keyed by ``platform:chat_id``.
 
-Lazy creation: ``resolve_current_session()`` reads the session_key from
+Lazy creation: ``resolve_current_session()`` reads platform + chat_id from
 contextvars or (as a fallback for slash commands) walks the call stack to
-find the gateway's ``event``/``source`` and derives session_key via
-``build_session_key(source)`` — the same function hermes uses, so the
-registry key matches hermes's own session identity (``agent:main:telegram:
-dm:123456789`` etc.). One CodexSession per hermes session.
+find the gateway's ``event``/``source``. One CodexSession per chat.
 
 **Slash-command fallback**: Plugin slash commands (``/codex``) are dispatched
 by the gateway *before* ``_set_session_env()`` populates contextvars, so the
@@ -33,10 +30,8 @@ _lock = threading.Lock()
 _MAX_STACK_DEPTH = 15
 
 # Fallback session_key when neither contextvars nor the stack yields a source
-# (e.g. CLI mode, cron jobs, ad-hoc imports). Mirrors hermes's own CLI key
-# style ("agent:main:local:dm:cli") so logs and downstream lookups don't
-# special-case the fallback.
-_CLI_FALLBACK_KEY = "agent:main:local:dm:cli"
+# (e.g. CLI mode, cron jobs, ad-hoc imports).
+_CLI_FALLBACK_KEY = "local:cli"
 
 
 def get(session_key: str) -> Optional[CodexSession]:
@@ -74,39 +69,35 @@ def clear() -> None:
 def resolve_current_session() -> CodexSession:
     """Resolve the CodexSession for the *current* hermes call context.
 
-    Uses hermes's ``session_key`` as the registry key — one CodexSession per
-    hermes session. The key matches hermes's own session identity so group/
-    thread per-user isolation behaves the same here as everywhere else.
+    Uses ``platform:chat_id`` as the registry key — one CodexSession per chat.
 
     Resolution order:
-    1. Contextvars (``HERMES_SESSION_KEY`` set by the gateway's
-       ``_set_session_env()`` before agent dispatch). LLM tool calls reach
-       this path.
+    1. Contextvars (set by the gateway's ``_set_session_env()`` before agent
+       dispatch). LLM tool calls reach this path.
     2. Stack inspection — fallback for plugin slash commands, which are
        dispatched *before* contextvars are set. Walks the stack for the
-       gateway's ``event``/``source`` local, then derives session_key via
-       ``build_session_key(source)``.
+       gateway's ``event``/``source`` local.
     3. Falls back to ``_CLI_FALLBACK_KEY`` if neither path yields a source.
     """
     from gateway.session_context import get_session_env
 
-    session_key = get_session_env("HERMES_SESSION_KEY", "")
     platform = get_session_env("HERMES_SESSION_PLATFORM", "")
     chat_id = get_session_env("HERMES_SESSION_CHAT_ID", "")
     thread_id = get_session_env("HERMES_SESSION_THREAD_ID", "")
 
     # Stack fallback: contextvars are empty during plugin slash dispatch.
-    if not session_key:
+    if not platform or not chat_id:
         source = _resolve_source_from_stack()
         if source is not None:
-            session_key = _build_session_key_from_source(source)
             platform = platform or _platform_str(source)
             chat_id = chat_id or _attr_str(source, "chat_id")
             thread_id = thread_id or _attr_str(source, "thread_id")
 
-    if not session_key:
+    if not platform or not chat_id:
         session_key = _CLI_FALLBACK_KEY
         chat_id = chat_id or "cli"
+    else:
+        session_key = f"{platform}:{chat_id}"
 
     logger.info(
         "v2 resolve_current_session: key=%r platform=%r chat_id=%r thread=%r",
@@ -145,40 +136,6 @@ def _resolve_source_from_stack() -> Optional[Any]:
             return source
 
     return None
-
-
-def _build_session_key_from_source(source: Any) -> str:
-    """Derive a hermes-style session_key from a SessionSource.
-
-    Reads the two isolation flags from ``GatewayConfig`` — the same source
-    ``SessionStore._generate_session_key`` reads. Defaults match hermes
-    (True/False) when the config can't be loaded.
-    """
-    from gateway.session import build_session_key
-
-    group_per_user = True
-    thread_per_user = False
-    try:
-        from gateway.config import load_gateway_config
-
-        cfg = load_gateway_config()
-        group_per_user = bool(cfg.group_sessions_per_user)
-        thread_per_user = bool(cfg.thread_sessions_per_user)
-    except Exception as exc:
-        logger.debug("v2: load_gateway_config failed (using defaults): %s", exc)
-
-    try:
-        return build_session_key(
-            source,
-            group_sessions_per_user=group_per_user,
-            thread_sessions_per_user=thread_per_user,
-        )
-    except Exception as exc:
-        # build_session_key shouldn't raise on a well-formed SessionSource,
-        # but if it does, fall through to the CLI fallback rather than crash
-        # the whole slash command.
-        logger.warning("v2: build_session_key failed: %s", exc)
-        return ""
 
 
 def _platform_str(source: Any) -> str:
