@@ -16,9 +16,21 @@ def _codex_available() -> bool:
 
 
 def register(ctx) -> None:
+    import asyncio
     from . import schemas
     from . import tools
     from .codex_websocket_v2 import commands
+    from .codex_websocket_v2 import notify
+
+    # Capture the hermes main event loop so cross-thread sends (codex bridge
+    # runs on its own loop; weixin's aiohttp session is bound to the main
+    # loop) can be scheduled correctly. In CLI mode there is no async loop
+    # at register-time — leave it as None and notify_user falls through to
+    # a direct await (single-loop world, no bridging needed).
+    try:
+        notify.set_main_loop(asyncio.get_running_loop())
+    except RuntimeError:
+        notify.set_main_loop(None)
 
     ctx.register_tool(
         name="codex_task",

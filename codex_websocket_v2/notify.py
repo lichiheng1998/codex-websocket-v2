@@ -7,6 +7,15 @@ mapping and the dynamic ``gateway`` / ``tools.send_message_tool`` imports
 tests / standalone use, so failures are caught and downgraded to a log
 warning).
 
+**Cross-loop dispatch**: codex bridges run on their own dedicated event
+loop (``codex-ws-{session_key}`` thread). Some platform adapters (e.g.
+weixin's live adapter) hold an aiohttp ``ClientSession`` that is bound to
+the hermes main loop — awaiting their ``send`` from the bridge loop raises
+``Timeout context manager should be used inside a task``. To fix this,
+``set_main_loop()`` records the hermes main loop at plugin register-time;
+``notify_user`` then schedules the send via ``run_coroutine_threadsafe``
+when the calling loop differs from the main loop.
+
 ``report_failure`` is the bridge's standard "task failed at stage X with
 detail Y" helper — kept here because its only side effect is one
 notify call.
@@ -14,12 +23,44 @@ notify call.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Optional
 
 from .state import TaskTarget
 
 logger = logging.getLogger(__name__)
+
+# Captured at plugin register-time when hermes is running async (gateway mode).
+# Used to route platform sends to the loop the live adapters are bound to.
+# Stays None in CLI mode — there's no separate "main loop" to bridge to.
+_MAIN_LOOP: Optional[asyncio.AbstractEventLoop] = None
+
+
+def set_main_loop(loop: Optional[asyncio.AbstractEventLoop]) -> None:
+    """Record the hermes main event loop. Called by the plugin's ``register()``."""
+    global _MAIN_LOOP
+    _MAIN_LOOP = loop
+
+
+async def _send_via_main_loop(coro_factory) -> None:
+    """Schedule ``coro_factory()`` on the hermes main loop and await its result.
+
+    If the current loop *is* the main loop (or no main loop was captured),
+    falls through to a direct ``await coro_factory()``.
+    """
+    try:
+        current = asyncio.get_running_loop()
+    except RuntimeError:
+        current = None
+
+    if _MAIN_LOOP is None or current is _MAIN_LOOP or not _MAIN_LOOP.is_running():
+        await coro_factory()
+        return
+
+    future = asyncio.run_coroutine_threadsafe(coro_factory(), _MAIN_LOOP)
+    # wrap_future bridges the concurrent.futures.Future to the calling loop.
+    await asyncio.wrap_future(future)
 
 
 async def notify_user(target: Optional[TaskTarget], message: str) -> None:
@@ -57,9 +98,13 @@ async def notify_user(target: Optional[TaskTarget], message: str) -> None:
             logger.warning("codex notify: platform %s not configured", platform)
             return
 
-        await _send_to_platform(
-            platform, pconfig, target.chat_id, message,
-            thread_id=target.thread_id or None,
+        chat_id = target.chat_id
+        thread_id = target.thread_id or None
+
+        await _send_via_main_loop(
+            lambda: _send_to_platform(
+                platform, pconfig, chat_id, message, thread_id=thread_id,
+            )
         )
     except Exception as exc:
         logger.warning("codex notify failed: %s", exc)
