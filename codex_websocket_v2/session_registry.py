@@ -1,9 +1,11 @@
-"""Process-level registry of CodexSession instances, keyed by chat_id.
+"""Process-level registry of CodexSession instances, keyed by hermes session_key.
 
-Lazy creation: ``resolve_current_session()`` reads the chat_id from
-contextvars or (as a fallback for slash commands) from the gateway's
-call-stack frame, then returns (creating if needed) the matching
-CodexSession.
+Lazy creation: ``resolve_current_session()`` reads the session_key from
+contextvars or (as a fallback for slash commands) walks the call stack to
+find the gateway's ``event``/``source`` and derives session_key via
+``build_session_key(source)`` — the same function hermes uses, so the
+registry key matches hermes's own session identity (``agent:main:telegram:
+dm:123456789`` etc.). One CodexSession per hermes session.
 
 **Slash-command fallback**: Plugin slash commands (``/codex``) are dispatched
 by the gateway *before* ``_set_session_env()`` populates contextvars, so the
@@ -17,7 +19,7 @@ from __future__ import annotations
 import inspect
 import logging
 import threading
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from .session import CodexSession
 from .state import TaskTarget
@@ -29,6 +31,12 @@ _lock = threading.Lock()
 
 # Maximum number of stack frames to search for the gateway event/source.
 _MAX_STACK_DEPTH = 15
+
+# Fallback session_key when neither contextvars nor the stack yields a source
+# (e.g. CLI mode, cron jobs, ad-hoc imports). Mirrors hermes's own CLI key
+# style ("agent:main:local:dm:cli") so logs and downstream lookups don't
+# special-case the fallback.
+_CLI_FALLBACK_KEY = "agent:main:local:dm:cli"
 
 
 def get(session_key: str) -> Optional[CodexSession]:
@@ -66,30 +74,40 @@ def clear() -> None:
 def resolve_current_session() -> CodexSession:
     """Resolve the CodexSession for the *current* hermes call context.
 
-    Uses ``chat_id`` as the session key — one CodexSession per chat.
+    Uses hermes's ``session_key`` as the registry key — one CodexSession per
+    hermes session. The key matches hermes's own session identity so group/
+    thread per-user isolation behaves the same here as everywhere else.
 
     Resolution order:
-    1. Contextvars (``gateway.session_context``) — works for tool calls and
-       any code that runs *after* the gateway's ``_set_session_env()``.
-    2. Stack inspection — fallback for slash commands, which are dispatched
-       *before* contextvars are set.  Walks up the call stack to find the
-       ``event`` or ``source`` local variable from ``_handle_message``.
-    3. Falls back to ``"cli"`` if neither path yields a chat_id.
+    1. Contextvars (``HERMES_SESSION_KEY`` set by the gateway's
+       ``_set_session_env()`` before agent dispatch). LLM tool calls reach
+       this path.
+    2. Stack inspection — fallback for plugin slash commands, which are
+       dispatched *before* contextvars are set. Walks the stack for the
+       gateway's ``event``/``source`` local, then derives session_key via
+       ``build_session_key(source)``.
+    3. Falls back to ``_CLI_FALLBACK_KEY`` if neither path yields a source.
     """
     from gateway.session_context import get_session_env
 
+    session_key = get_session_env("HERMES_SESSION_KEY", "")
     platform = get_session_env("HERMES_SESSION_PLATFORM", "")
     chat_id = get_session_env("HERMES_SESSION_CHAT_ID", "")
     thread_id = get_session_env("HERMES_SESSION_THREAD_ID", "")
 
-    # If contextvars are empty (slash command dispatch), try stack inspection.
-    if not chat_id:
-        pl, ci, ti = _resolve_from_stack()
-        platform = platform or pl
-        chat_id = ci
-        thread_id = thread_id or ti
+    # Stack fallback: contextvars are empty during plugin slash dispatch.
+    if not session_key:
+        source = _resolve_source_from_stack()
+        if source is not None:
+            session_key = _build_session_key_from_source(source)
+            platform = platform or _platform_str(source)
+            chat_id = chat_id or _attr_str(source, "chat_id")
+            thread_id = thread_id or _attr_str(source, "thread_id")
 
-    session_key = chat_id or "cli"
+    if not session_key:
+        session_key = _CLI_FALLBACK_KEY
+        chat_id = chat_id or "cli"
+
     logger.info(
         "v2 resolve_current_session: key=%r platform=%r chat_id=%r thread=%r",
         session_key, platform, chat_id, thread_id,
@@ -98,48 +116,94 @@ def resolve_current_session() -> CodexSession:
     return get_or_create(session_key, target)
 
 
-def _resolve_from_stack() -> Tuple[str, str, str]:
-    """Walk the call stack to extract session info from the gateway's ``_handle_message``.
+def _resolve_source_from_stack() -> Optional[Any]:
+    """Walk the call stack for the gateway's ``event``/``source`` local.
 
-    Returns ``(platform, chat_id, thread_id)`` — any field may be empty if the
-    frame or its locals are not found.
+    Returns the SessionSource (or whatever object is at ``source`` / ``event.source``)
+    if found, else ``None``. Caller is responsible for deriving fields.
     """
     try:
         frames = inspect.stack()[1:]  # skip this frame
     except Exception:
-        return ("", "", "")
+        return None
 
     for frame_info in frames[:_MAX_STACK_DEPTH]:
         locals_ = frame_info.frame.f_locals
 
-        # Look for ``event`` (MessageEvent) — has .source with full metadata.
+        # ``event`` (MessageEvent) carries .source with full metadata.
         event = locals_.get("event")
         source = getattr(event, "source", None) if event is not None else None
 
-        # Some frames may only have ``source`` directly.
+        # Some frames may have ``source`` directly.
         if source is None:
             source = locals_.get("source")
 
-        if source is not None:
-            platform = _get_attr(source, "platform")
-            # platform may be an enum; normalise to string.
-            platform = getattr(platform, "value", platform) or ""
-            chat_id = _get_attr(source, "chat_id") or ""
-            thread_id = _get_attr(source, "thread_id") or ""
-            if chat_id:
-                logger.debug(
-                    "v2 stack fallback: platform=%r chat_id=%r thread=%r (frame=%s)",
-                    platform, chat_id, thread_id, frame_info.function,
-                )
-                return (platform, chat_id, str(thread_id))
+        if source is not None and _attr_str(source, "chat_id"):
+            logger.debug(
+                "v2 stack fallback: found source in frame %s", frame_info.function,
+            )
+            return source
 
-    return ("", "", "")
+    return None
 
 
-def _get_attr(obj: object, name: str, default: str = "") -> str:
-    """Read an attribute, coercing to str; returns *default* on any failure."""
+def _build_session_key_from_source(source: Any) -> str:
+    """Derive a hermes-style session_key from a SessionSource.
+
+    Reads the two isolation flags from ``GatewayConfig`` — the same source
+    ``SessionStore._generate_session_key`` reads. Defaults match hermes
+    (True/False) when the config can't be loaded.
+    """
+    from gateway.session import build_session_key
+
+    group_per_user = True
+    thread_per_user = False
+    try:
+        from gateway.config import load_gateway_config
+
+        cfg = load_gateway_config()
+        group_per_user = bool(cfg.group_sessions_per_user)
+        thread_per_user = bool(cfg.thread_sessions_per_user)
+    except Exception as exc:
+        logger.debug("v2: load_gateway_config failed (using defaults): %s", exc)
+
+    try:
+        return build_session_key(
+            source,
+            group_sessions_per_user=group_per_user,
+            thread_sessions_per_user=thread_per_user,
+        )
+    except Exception as exc:
+        # build_session_key shouldn't raise on a well-formed SessionSource,
+        # but if it does, fall through to the CLI fallback rather than crash
+        # the whole slash command.
+        logger.warning("v2: build_session_key failed: %s", exc)
+        return ""
+
+
+def _platform_str(source: Any) -> str:
+    """Normalise ``source.platform`` (Platform enum or str) to its string value."""
+    plat = getattr(source, "platform", None)
+    if plat is None:
+        return ""
+    # Platform enum has .value="telegram"; plain strings pass through.
+    return getattr(plat, "value", plat) or ""
+
+
+def _attr_str(obj: Any, name: str, default: str = "") -> str:
+    """Read a string attribute, returning *default* on missing/None/error.
+
+    Unlike a naive ``str(getattr(...))``, this does NOT stringify enums (which
+    would produce ``"Platform.TELEGRAM"`` instead of the bare ``"telegram"``).
+    Use ``_platform_str`` for enum-bearing fields.
+    """
     try:
         val = getattr(obj, name, default)
-        return str(val) if val is not None else default
+        if val is None:
+            return default
+        if isinstance(val, str):
+            return val
+        # Numbers (telegram chat_id is int in some adapters) → str
+        return str(val)
     except Exception:
         return default
