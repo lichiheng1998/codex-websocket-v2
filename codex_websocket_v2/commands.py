@@ -3,24 +3,59 @@
 Subcommands: list [--threads], models, model, reply, approve, deny, archive,
 plan, verbose, status, help.
 
-Every entry point starts with ``resolve_current_session()`` to get/create
-the CodexSession that matches the current hermes session_key.
+Each subcommand parses argv with argparse, then delegates to a registered
+tool via ``_DISPATCH`` (wired by ``__init__.register()``). The tool's JSON
+result is reformatted into the human display string (byte-for-byte
+compatible with the pre-refactor output).
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import shlex
-from typing import Optional
-
-from .session import CodexSession
-from .session_registry import resolve_current_session
+from typing import Callable, Optional
 
 logger = logging.getLogger(__name__)
 
 MAX_TASKS_DISPLAY = 20
 MAX_PREVIEW_LENGTH = 60
+
+
+# ---------------------------------------------------------------------------
+# Dispatch bridge — wired at register() time by __init__.py
+# ---------------------------------------------------------------------------
+
+_DISPATCH: Optional[Callable[[str, dict], str]] = None
+
+
+def set_dispatch(dispatch_fn: Callable[[str, dict], str]) -> None:
+    """Wire ``ctx.dispatch_tool`` so slash handlers can invoke registered tools."""
+    global _DISPATCH
+    _DISPATCH = dispatch_fn
+
+
+def _call(tool_name: str, args: dict) -> dict:
+    if _DISPATCH is None:
+        return {"ok": False, "error": "codex commands: dispatch not wired (plugin not registered?)"}
+    try:
+        raw = _DISPATCH(tool_name, args)
+    except Exception as exc:  # pragma: no cover — registry should swallow most errors
+        logger.exception("codex commands: dispatch %s failed", tool_name)
+        return {"ok": False, "error": f"dispatch failed: {exc}"}
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        return {"ok": False, "error": f"non-JSON tool response: {raw!r}"}
+    if not isinstance(parsed, dict):
+        return {"ok": False, "error": f"unexpected tool response shape: {parsed!r}"}
+    return parsed
+
+
+# ---------------------------------------------------------------------------
+# argparse setup
+# ---------------------------------------------------------------------------
 
 
 class _CodexHelpRequested(Exception):
@@ -92,6 +127,11 @@ def _parse_args(raw: str) -> Optional[argparse.Namespace]:
         return None
 
 
+# ---------------------------------------------------------------------------
+# Help text — kept local (not routed through any tool)
+# ---------------------------------------------------------------------------
+
+
 def _cmd_help() -> str:
     return (
         "Usage:\n"
@@ -123,22 +163,66 @@ def _cmd_help_topic(topic: Optional[str]) -> str:
         return f"Unknown help topic `{topic}`. Try `/codex --help`."
 
 
-def _cmd_list(session: CodexSession, show_threads: bool = False) -> str:
+# ---------------------------------------------------------------------------
+# Tool-routed subcommand handlers — each parses argv into args dict, calls
+# the matching tool via _call(), then formats the JSON result for display.
+# ---------------------------------------------------------------------------
+
+
+def _cmd_list(show_threads: bool = False) -> str:
     if show_threads:
-        return _list_threads(session)
-    return _list_tasks(session)
+        return _list_threads()
+    return _list_tasks()
 
 
-def _cmd_models(session: CodexSession) -> str:
-    result = session.list_models()
+def _list_tasks() -> str:
+    result = _call("codex_tasks", {"action": "list", "show_threads": False})
     if not result.get("ok"):
-        return f"Failed to list models: {result.get('error')}"
+        return f"Failed: {result.get('error', 'unknown error')}"
+    tasks = result.get("tasks") or []
+    if not tasks:
+        return "No Codex tasks in this session."
+    lines = ["Codex tasks:"]
+    for task in tasks[:MAX_TASKS_DISPLAY]:
+        flag = ""
+        pending = task.get("pending")
+        if pending:
+            flag = f"  ⚠️ pending {pending.get('type')}"
+        thread_id = task.get("thread_id") or ""
+        lines.append(f"  `{task.get('task_id')}` → `{thread_id[:8]}…`{flag}")
+    lines.append("\nReply: `/codex reply <task_id> <message>`")
+    return "\n".join(lines)
 
-    models = result.get("data") or []
+
+def _list_threads() -> str:
+    result = _call("codex_tasks", {"action": "list", "show_threads": True})
+    if not result.get("ok"):
+        return f"Failed to list threads: {result.get('error', 'unknown error')}"
+    threads = result.get("threads") or []
+    if not threads:
+        return "No threads on server."
+    total = result.get("total", len(threads))
+    lines = [f"Codex threads ({total}):"]
+    for t in threads[:MAX_TASKS_DISPLAY]:
+        tid = t.get("id", "?")
+        cwd = t.get("cwd", "?")
+        preview = (t.get("preview") or "").replace("\n", " ")[:MAX_PREVIEW_LENGTH]
+        lines.append(f"  `{tid}` — `{cwd}` {preview}")
+    if total > MAX_TASKS_DISPLAY:
+        lines.append(f"  … and {total - MAX_TASKS_DISPLAY} more")
+    return "\n".join(lines)
+
+
+def _cmd_models() -> str:
+    result = _call("codex_models", {"action": "list"})
+    if not result.get("ok"):
+        return f"Failed to list models: {result.get('error', 'unknown error')}"
+
+    models = result.get("models") or []
     if not models:
         return "No models returned by app-server."
 
-    current = session.get_default_model()
+    current = result.get("current") or ""
     lines = ["Available models:"]
     for item in models:
         model_id = item.get("id") or item.get("model") or "?"
@@ -154,149 +238,144 @@ def _cmd_models(session: CodexSession) -> str:
     return "\n".join(lines)
 
 
-def _cmd_model(session: CodexSession, model_id: Optional[str]) -> str:
-    started = session.ensure_started()
-    if not started.get("ok"):
-        return f"Failed: {started.get('error')}"
+def _cmd_model(model_id: Optional[str]) -> str:
     if not model_id:
-        return f"Default model is `{session.get_default_model()}`."
+        result = _call("codex_models", {"action": "get_default"})
+        if not result.get("ok"):
+            return f"Failed: {result.get('error', 'unknown error')}"
+        return f"Default model is `{result.get('model', '')}`."
 
-    result = session.set_default_model(model_id)
+    result = _call("codex_models", {"action": "set_default", "model_id": model_id})
     if not result.get("ok"):
-        return f"Failed: {result.get('error')}"
+        return f"Failed: {result.get('error', 'unknown error')}"
     return f"Default model set to `{result['model']}`."
 
 
-def _list_tasks(session: CodexSession) -> str:
-    if not session.tasks:
-        return "No Codex tasks in this session."
-    lines = ["Codex tasks:"]
-    for task in list(session.tasks.values())[:MAX_TASKS_DISPLAY]:
-        flag = ""
-        if task.request_rpc_id is not None:
-            flag = f"  ⚠️ pending {task.request_type}"
-        lines.append(f"  `{task.task_id}` → `{task.thread_id[:8]}…`{flag}")
-    lines.append("\nReply: `/codex reply <task_id> <message>`")
-    return "\n".join(lines)
-
-
-def _list_threads(session: CodexSession) -> str:
-    try:
-        result = session.list_threads()
-        threads = (result or {}).get("data", [])
-    except Exception as exc:
-        return f"Failed to list threads: {exc}"
-    if not threads:
-        return "No threads on server."
-    total = len(threads)
-    lines = [f"Codex threads ({total}):"]
-    for t in threads[:MAX_TASKS_DISPLAY]:
-        tid = t.get("id", "?")
-        cwd = t.get("cwd", "?")
-        preview = (t.get("preview") or "").replace("\n", " ")[:MAX_PREVIEW_LENGTH]
-        lines.append(f"  `{tid}` — `{cwd}` {preview}")
-    if total > MAX_TASKS_DISPLAY:
-        lines.append(f"  … and {total - MAX_TASKS_DISPLAY} more")
-    return "\n".join(lines)
-
-
-def _cmd_approve(session: CodexSession, task_id: str) -> str:
-    result = session.approve_task(task_id, "accept")
+def _cmd_approve(task_id: str) -> str:
+    result = _call("codex_tasks", {"action": "approve", "task_id": task_id})
     if result.get("ok"):
         return f"Approved task `{task_id}`."
-    return f"Failed: {result.get('error')}"
+    return f"Failed: {result.get('error', 'unknown error')}"
 
 
-def _cmd_deny(session: CodexSession, task_id: str) -> str:
-    result = session.approve_task(task_id, "decline")
+def _cmd_deny(task_id: str) -> str:
+    result = _call("codex_tasks", {"action": "deny", "task_id": task_id})
     if result.get("ok"):
         return f"Denied task `{task_id}`."
-    return f"Failed: {result.get('error')}"
+    return f"Failed: {result.get('error', 'unknown error')}"
 
 
-def _cmd_archive(session: CodexSession, target: str) -> str:
-    if target == "allthreads":
-        result = session.archive_all_threads()
+def _cmd_archive(target: str) -> str:
+    result = _call("codex_tasks", {"action": "archive", "target": target})
+    scope = result.get("scope")
+
+    if scope == "allthreads":
+        removed = result.get("removed", 0)
+        errors = result.get("errors") or []
         if result.get("ok"):
-            return f"Archived {result['removed']} threads."
-        return f"Archived {result['removed']}, failed: {', '.join(result['errors'])}"
-    if target == "all":
-        result = session.remove_all_tasks()
+            return f"Archived {removed} threads."
+        return f"Archived {removed}, failed: {', '.join(errors)}"
+
+    if scope == "all":
+        removed = result.get("removed", 0)
+        errors = result.get("errors") or []
         if result.get("ok"):
-            return f"Archived {result['removed']} tasks."
-        return f"Archived {result['removed']}, failed: {', '.join(result['errors'])}"
-    result = session.remove_task(target)
+            return f"Archived {removed} tasks."
+        return f"Archived {removed}, failed: {', '.join(errors)}"
+
     if result.get("ok"):
         return f"Task `{target}` archived."
-    return f"Failed: {result.get('error')}"
+    return f"Failed: {result.get('error', 'unknown error')}"
 
 
-def _cmd_plan(session: CodexSession, toggle: Optional[str]) -> str:
+def _cmd_plan(toggle: Optional[str]) -> str:
     if toggle is None:
-        return f"Plan mode is `{session.get_mode()}`."
+        result = _call("codex_session", {"action": "plan_get"})
+        if not result.get("ok"):
+            return f"Failed: {result.get('error', 'unknown error')}"
+        return f"Plan mode is `{result.get('mode', '')}`."
     normalized = toggle.strip().lower()
     if normalized in ("on", "true", "1", "enable", "enabled"):
-        session.set_mode("plan")
+        enabled = True
+    elif normalized in ("off", "false", "0", "disable", "disabled"):
+        enabled = False
+    else:
+        return f"Unknown toggle `{toggle}`. Use `/codex plan on` or `/codex plan off`."
+
+    result = _call("codex_session", {"action": "plan_set", "enabled": enabled})
+    if not result.get("ok"):
+        return f"Failed: {result.get('error', 'unknown error')}"
+    if enabled:
         return "Plan mode `on` — future turns will use collaborationMode=plan."
-    if normalized in ("off", "false", "0", "disable", "disabled"):
-        session.set_mode("default")
-        return "Plan mode `off` — future turns will use collaborationMode=default."
-    return f"Unknown toggle `{toggle}`. Use `/codex plan on` or `/codex plan off`."
+    return "Plan mode `off` — future turns will use collaborationMode=default."
 
 
-def _cmd_verbose(session: CodexSession, toggle: Optional[str]) -> str:
+def _cmd_verbose(toggle: Optional[str]) -> str:
     if toggle is None:
-        state = "on" if session.get_verbose() else "off"
+        result = _call("codex_session", {"action": "verbose_get"})
+        if not result.get("ok"):
+            return f"Failed: {result.get('error', 'unknown error')}"
+        state = "on" if result.get("verbose") else "off"
         return f"Verbose mode is `{state}`."
     normalized = toggle.strip().lower()
     if normalized in ("on", "true", "1", "enable", "enabled"):
-        session.set_verbose(True)
+        enabled = True
+    elif normalized in ("off", "false", "0", "disable", "disabled"):
+        enabled = False
+    else:
+        return f"Unknown toggle `{toggle}`. Use `/codex verbose on` or `/codex verbose off`."
+
+    result = _call("codex_session", {"action": "verbose_set", "enabled": enabled})
+    if not result.get("ok"):
+        return f"Failed: {result.get('error', 'unknown error')}"
+    if enabled:
         return "Verbose mode `on` — item/completed notifications will be shown."
-    if normalized in ("off", "false", "0", "disable", "disabled"):
-        session.set_verbose(False)
-        return "Verbose mode `off` — only turn/completed notifications will be shown."
-    return f"Unknown toggle `{toggle}`. Use `/codex verbose on` or `/codex verbose off`."
+    return "Verbose mode `off` — only turn/completed notifications will be shown."
 
 
-def _cmd_reply(session: CodexSession, ns: argparse.Namespace) -> str:
+def _cmd_reply(ns: argparse.Namespace) -> str:
     task_id = ns.task_id
     message = " ".join(ns.message).strip() if ns.message else ""
     if not message:
         return "Missing message. Usage: `/codex reply <task_id> <message>`"
-    try:
-        result = session.send_reply(task_id, message)
-    except Exception as exc:
-        logger.exception("codex /reply failed")
-        return f"Failed to send reply: {exc}"
+    result = _call("codex_tasks", {
+        "action": "reply",
+        "task_id": task_id,
+        "message": message,
+    })
     if not result.get("ok"):
         return f"Failed: {result.get('error', 'unknown error')}"
     return f"Message sent to Codex task `{task_id}`, waiting for reply..."
 
 
-def _cmd_status(session: CodexSession) -> str:
-    status = session.get_status()
-    if not status.get("ok"):
-        return f"Failed to get status: {status.get('error')}"
+def _cmd_status() -> str:
+    result = _call("codex_session", {"action": "status"})
+    if not result.get("ok"):
+        return f"Failed to get status: {result.get('error', 'unknown error')}"
 
-    conn = "connected" if status["connected"] else "disconnected"
+    conn = "connected" if result["connected"] else "disconnected"
     return (
         "**CodexSession Status**\n"
-        f"• Session key: `{session.session_key}`\n"
+        f"• Session key: `{result['session_key']}`\n"
         f"• Connection: {conn}\n"
-        f"• Active tasks: {status['active_tasks']}\n"
-        f"• Total threads: {status['total_threads']}\n"
-        f"• Default model: `{status['model']}`\n"
-        f"• Mode: `{status['mode']}`\n"
-        f"• Verbose: {'on' if status['verbose'] else 'off'}"
+        f"• Active tasks: {result['active_tasks']}\n"
+        f"• Total threads: {result['total_threads']}\n"
+        f"• Default model: `{result['model']}`\n"
+        f"• Mode: `{result['mode']}`\n"
+        f"• Verbose: {'on' if result['verbose'] else 'off'}"
     )
 
 
+# ---------------------------------------------------------------------------
+# Top-level dispatch
+# ---------------------------------------------------------------------------
+
+
 def handle_slash(raw_args: str) -> str:
-    session = resolve_current_session()
     ns = _parse_args(raw_args or "")
 
     if ns is None or ns.command is None:
-        return _cmd_list(session)
+        return _cmd_list()
 
     if ns.command == "__help__":
         return (ns.help_text or _cmd_help()).strip()
@@ -305,33 +384,33 @@ def handle_slash(raw_args: str) -> str:
         return _cmd_help_topic(getattr(ns, "topic", None))
 
     if ns.command == "list":
-        return _cmd_list(session, show_threads=ns.threads)
+        return _cmd_list(show_threads=ns.threads)
 
     if ns.command == "models":
-        return _cmd_models(session)
+        return _cmd_models()
 
     if ns.command == "model":
-        return _cmd_model(session, ns.model_id)
+        return _cmd_model(ns.model_id)
 
     if ns.command == "approve":
-        return _cmd_approve(session, ns.task_id)
+        return _cmd_approve(ns.task_id)
 
     if ns.command == "deny":
-        return _cmd_deny(session, ns.task_id)
+        return _cmd_deny(ns.task_id)
 
     if ns.command == "archive":
-        return _cmd_archive(session, ns.target)
+        return _cmd_archive(ns.target)
 
     if ns.command == "plan":
-        return _cmd_plan(session, ns.toggle)
+        return _cmd_plan(ns.toggle)
 
     if ns.command == "verbose":
-        return _cmd_verbose(session, ns.toggle)
+        return _cmd_verbose(ns.toggle)
 
     if ns.command == "status":
-        return _cmd_status(session)
+        return _cmd_status()
 
     if ns.command == "reply":
-        return _cmd_reply(session, ns)
+        return _cmd_reply(ns)
 
     return f"Unknown subcommand `{ns.command}`. Try `/codex help`."

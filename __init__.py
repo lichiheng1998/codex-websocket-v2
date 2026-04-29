@@ -18,7 +18,7 @@ def _codex_available() -> bool:
 def register(ctx) -> None:
     from . import schemas
     from . import tools
-    from .codex_websocket_v2.commands import handle_slash
+    from .codex_websocket_v2 import commands
 
     ctx.register_tool(
         name="codex_task",
@@ -34,10 +34,35 @@ def register(ctx) -> None:
         handler=tools.codex_revive,
         check_fn=_codex_available,
     )
+    ctx.register_tool(
+        name="codex_tasks",
+        toolset="codex_bridge",
+        schema=schemas.CODEX_TASKS,
+        handler=tools.codex_tasks,
+        check_fn=_codex_available,
+    )
+    ctx.register_tool(
+        name="codex_models",
+        toolset="codex_bridge",
+        schema=schemas.CODEX_MODELS,
+        handler=tools.codex_models,
+        check_fn=_codex_available,
+    )
+    ctx.register_tool(
+        name="codex_session",
+        toolset="codex_bridge",
+        schema=schemas.CODEX_SESSION,
+        handler=tools.codex_session,
+        check_fn=_codex_available,
+    )
+
+    commands.set_dispatch(ctx.dispatch_tool)
+
     ctx.register_command(
         "codex",
-        handler=handle_slash,
+        handler=commands.handle_slash,
         description="Codex task management (per-session, v2)",
+        args_hint="<subcommand> [args]",
     )
 
     atexit.register(_shutdown_all)

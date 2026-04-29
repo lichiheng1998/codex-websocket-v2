@@ -44,6 +44,114 @@ CODEX_REVIVE = {
     },
 }
 
+CODEX_TASKS = {
+    "name": "codex_tasks",
+    "description": (
+        "Inspect or act on Codex tasks/threads in the current session. "
+        "Action 'list' returns this session's tasks; pass show_threads=true "
+        "to instead list every thread on the codex app-server. "
+        "'reply' sends a follow-up message to a running task (requires "
+        "task_id and message). 'approve'/'deny' resolve a pending command "
+        "or elicitation request (requires task_id). 'archive' removes a "
+        "single task_id from this session, or pass target='all' to archive "
+        "every task in this session, or target='allthreads' to archive "
+        "every thread on the server. "
+        "Mirrors the user-facing /codex list/reply/approve/deny/archive "
+        "subcommands."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": ["list", "reply", "approve", "deny", "archive"],
+            },
+            "task_id": {
+                "type": "string",
+                "description": "Required for reply/approve/deny.",
+            },
+            "message": {
+                "type": "string",
+                "description": "Required for reply.",
+            },
+            "target": {
+                "type": "string",
+                "description": (
+                    "For archive: a task_id, 'all' (this session's tasks), "
+                    "or 'allthreads' (every thread on the server)."
+                ),
+            },
+            "show_threads": {
+                "type": "boolean",
+                "description": "For list: include all server threads instead of session tasks.",
+            },
+        },
+        "required": ["action"],
+    },
+}
+
+
+CODEX_MODELS = {
+    "name": "codex_models",
+    "description": (
+        "Inspect or set the default Codex model for this session. "
+        "Action 'list' returns models advertised by the codex app-server "
+        "(annotated with which one is the current session default). "
+        "'get_default' returns the current session default. "
+        "'set_default' sets the session default (requires model_id). "
+        "Mirrors /codex models / /codex model [<id>]."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": ["list", "get_default", "set_default"],
+            },
+            "model_id": {
+                "type": "string",
+                "description": "Required for set_default.",
+            },
+        },
+        "required": ["action"],
+    },
+}
+
+
+CODEX_SESSION = {
+    "name": "codex_session",
+    "description": (
+        "Inspect or toggle session-level Codex state. "
+        "'status' returns a snapshot (connection, active_tasks, total_threads, "
+        "model, mode, verbose). 'plan_get'/'plan_set' read or set plan-mode "
+        "(when enabled, future turns use collaborationMode=plan). "
+        "'verbose_get'/'verbose_set' read or set verbose-mode (item/completed "
+        "notifications). 'plan_set' and 'verbose_set' require enabled=true|false. "
+        "Mirrors /codex status / plan / verbose."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": [
+                    "status",
+                    "plan_get",
+                    "plan_set",
+                    "verbose_get",
+                    "verbose_set",
+                ],
+            },
+            "enabled": {
+                "type": "boolean",
+                "description": "Required for plan_set / verbose_set.",
+            },
+        },
+        "required": ["action"],
+    },
+}
+
+
 CODEX_TASK = {
     "name": "codex_task",
     "description": (
