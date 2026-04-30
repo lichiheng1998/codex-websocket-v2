@@ -112,6 +112,23 @@ def codex_tasks(args: dict, **kwargs: Any) -> str:
             return _error(result.get("error", "unknown error"))
         return json.dumps({"ok": True, "task_id": task_id}, ensure_ascii=False)
 
+    if action == "answer":
+        task_id = (args.get("task_id") or "").strip()
+        if not task_id:
+            return _error("task_id is required for answer")
+        responses = args.get("responses")
+        if not isinstance(responses, list) or not responses:
+            return _error("responses must be a non-empty list of strings")
+        if not all(isinstance(r, str) for r in responses):
+            return _error("responses must be a list of strings")
+        try:
+            result = session.input_task(task_id, responses=responses)
+        except Exception as exc:
+            return _error(f"input_task failed: {exc}")
+        if not result.get("ok"):
+            return _error(result.get("error", "unknown error"))
+        return json.dumps({"ok": True, "task_id": task_id}, ensure_ascii=False)
+
     if action in ("approve", "deny"):
         task_id = (args.get("task_id") or "").strip()
         if not task_id:

@@ -356,8 +356,12 @@ class CodexSession:
         task.request_payload = None
         return ok(decision=decision)
 
-    def input_task(self, task_id: str, answer: str) -> Result:
-        """Resolve a pending input request by sending the user's answer."""
+    def input_task(self, task_id: str, answer: str = "", *, responses: "list[str] | None" = None) -> Result:
+        """Resolve a pending input request by sending the user's answer(s).
+
+        Pass ``responses`` (one string per question) when the LLM knows all
+        answers; fall back to ``answer`` which is replicated across all questions.
+        """
         task = self.tasks.get(task_id)
         if task is None or task.request_rpc_id is None:
             return err(f"no pending input for task `{task_id}`")
@@ -365,12 +369,13 @@ class CodexSession:
             return err(f"task `{task_id}` has a {task.request_type!r} request, not input")
 
         questions = (task.request_payload or {}).get("questions") or []
-        if len(questions) > 1:
-            # Multi-question form: collapse the user's single message into one
-            # answer per question (best effort — same behavior as v1).
-            responses = [answer] * len(questions)
+        n = len(questions) or 1
+        if responses is not None:
+            # Pad or truncate to match question count.
+            pad = responses[-1] if responses else ""
+            responses = (list(responses) + [pad] * n)[:n]
         else:
-            responses = [answer]
+            responses = [answer] * n
 
         rpc_id = task.request_rpc_id
         send = self.bridge.run_sync(

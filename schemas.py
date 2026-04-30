@@ -7,9 +7,13 @@ CODEX_REVIVE = {
     "description": (
         "Revive a Codex thread from a previous session (e.g. after gateway "
         "restart). Restores the thread into the active task map so the user "
-        "can reply to it via `/codex reply`. Use when the user references an "
-        "existing Codex thread_id that is no longer tracked in the current "
-        "session. Codex's `thread/read` does NOT return the thread's last "
+        "can send follow-up turns via codex_tasks reply. "
+        "IMPORTANT: only revive threads whose status is truly terminated or "
+        "unknown — do NOT revive a thread just because you received a "
+        "turn/completed notification. turn/completed means one turn finished "
+        "and Codex is idle waiting for the next prompt; the thread is still "
+        "alive and tracked. Use codex_tasks reply to continue it instead. "
+        "Codex's `thread/read` does NOT return the thread's last "
         "`model`/`sandbox_policy`/`approval_policy` (those are per-turn "
         "overrides), so pass them explicitly if the user wants follow-up "
         "turns to keep the original configuration; otherwise plugin defaults "
@@ -50,12 +54,18 @@ CODEX_TASKS = {
         "Inspect or act on Codex tasks/threads in the current session. "
         "Action 'list' returns this session's tasks; pass show_threads=true "
         "to instead list every thread on the codex app-server. "
-        "'reply' sends a follow-up message to a running task (requires "
-        "task_id and message). 'approve'/'deny' resolve a pending command "
-        "or elicitation request (requires task_id). 'archive' removes a "
-        "single task_id from this session, or pass target='all' to archive "
-        "every task in this session, or target='allthreads' to archive "
-        "every thread on the server. "
+        "'reply' sends a follow-up turn message to a running task (requires "
+        "task_id and message). Use this to continue a conversation after "
+        "turn/completed — turn/completed only means the current turn ended, "
+        "NOT that the thread is finished; the thread stays alive and tracked. "
+        "'answer' resolves a pending requestUserInput from Codex (requires "
+        "task_id and responses array). Use this — not reply — when Codex "
+        "explicitly asked one or more questions and is waiting for answers; "
+        "provide one string per question in order. "
+        "'approve'/'deny' resolve a pending command or elicitation request "
+        "(requires task_id). 'archive' removes a single task_id from this "
+        "session, or pass target='all' to archive every task in this session, "
+        "or target='allthreads' to archive every thread on the server. "
         "Mirrors the user-facing /codex list/reply/approve/deny/archive "
         "subcommands."
     ),
@@ -64,15 +74,24 @@ CODEX_TASKS = {
         "properties": {
             "action": {
                 "type": "string",
-                "enum": ["list", "reply", "approve", "deny", "archive"],
+                "enum": ["list", "reply", "answer", "approve", "deny", "archive"],
             },
             "task_id": {
                 "type": "string",
-                "description": "Required for reply/approve/deny.",
+                "description": "Required for reply/answer/approve/deny.",
             },
             "message": {
                 "type": "string",
-                "description": "Required for reply.",
+                "description": "Required for reply: the follow-up turn message to send.",
+            },
+            "responses": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Required for answer: one string per question in the order "
+                    "Codex presented them. The array is sent as-is; if shorter "
+                    "than the question count the last entry is repeated."
+                ),
             },
             "target": {
                 "type": "string",
@@ -169,13 +188,17 @@ CODEX_TASK = {
         "**Returns immediately with a task_id** — Codex runs asynchronously; "
         "progress updates, approval requests, and the final result are pushed "
         "to the current chat as separate messages. Command/file-change "
-        "approvals route through `/codex approve`/`/codex deny`. If Codex "
-        "asks the user a question (e.g. plan mode is enabled via "
-        "`/codex plan on`), the user replies via `/codex reply <task_id> "
-        "<answer>`. Use this when a task is "
-        "well-scoped for a code-focused sub-agent (bug fix, feature, "
-        "refactor). After calling, report the task_id to the user and return "
-        "control — do NOT poll for the result."
+        "approvals route through codex_tasks approve/deny. "
+        "IMPORTANT: a turn/completed notification means one turn ended and "
+        "Codex is idle — it does NOT mean the thread is finished or needs "
+        "reviving. To send a follow-up prompt use codex_tasks reply. Only use "
+        "codex_revive for threads that are no longer tracked in this session "
+        "(e.g. after a gateway restart). "
+        "If Codex asks one or more questions (requestUserInput), answer with "
+        "codex_tasks answer (not reply). "
+        "Use this when a task is well-scoped for a code-focused sub-agent "
+        "(bug fix, feature, refactor). After calling, report the task_id to "
+        "the user and return control — do NOT poll for the result."
     ),
     "parameters": {
         "type": "object",

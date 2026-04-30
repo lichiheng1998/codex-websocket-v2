@@ -131,6 +131,20 @@ async def notify_user(target: Optional[TaskTarget], message: str) -> None:
                 platform, pconfig, chat_id, message, thread_id=thread_id,
             )
         )
+
+        # Mirror the same text into the hermes session transcript so the
+        # agent's conversation log reflects what was pushed to the platform.
+        try:
+            from gateway.mirror import mirror_to_session
+            mirror_to_session(
+                platform=target.platform,
+                chat_id=str(target.chat_id),
+                message_text=message,
+                source_label="codex",
+                thread_id=thread_id,
+            )
+        except Exception as mirror_exc:
+            logger.debug("codex notify: mirror skipped: %s", mirror_exc)
     except Exception as exc:
         logger.warning("codex notify failed: %s", exc)
 

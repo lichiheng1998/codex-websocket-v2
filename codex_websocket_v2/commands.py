@@ -1,7 +1,7 @@
 """Slash command handlers for /codex (WebSocket v2 — per-session).
 
-Subcommands: list [--threads], models, model, reply, approve, deny, archive,
-plan, verbose, status, help.
+Subcommands: list [--threads], models, model, reply, answer, approve, deny,
+archive, plan, verbose, status, help.
 
 Each subcommand parses argv with argparse, then delegates to a registered
 tool via ``_DISPATCH`` (wired by ``__init__.register()``). The tool's JSON
@@ -88,6 +88,13 @@ def _build_parser() -> argparse.ArgumentParser:
     reply_p.add_argument("task_id")
     reply_p.add_argument("message", nargs=argparse.REMAINDER)
 
+    answer_p = sub.add_parser(
+        "answer", add_help=True,
+        help="answer a pending requestUserInput (separate multiple answers with ' | ')",
+    )
+    answer_p.add_argument("task_id")
+    answer_p.add_argument("answers", nargs=argparse.REMAINDER)
+
     for name in ("approve", "deny"):
         p = sub.add_parser(name, add_help=True, help=f"{name} a pending request")
         p.add_argument("task_id")
@@ -140,7 +147,9 @@ def _cmd_help() -> str:
         "  `/codex models` — list available models from app-server\n"
         "  `/codex model` — show current default model (this session)\n"
         "  `/codex model <model_id>` — set default model for this session\n"
-        "  `/codex reply <task_id> <message>` — send follow-up to Codex\n"
+        "  `/codex reply <task_id> <message>` — send follow-up turn to Codex\n"
+        "  `/codex answer <task_id> <answer>` — answer a Codex question\n"
+        "  `/codex answer <task_id> <a1> | <a2> | <a3>` — answer multiple questions (separate with ' | ')\n"
         "  `/codex approve <task_id>` — approve a pending Codex request\n"
         "  `/codex deny <task_id>` — deny a pending Codex request\n"
         "  `/codex archive <task_id>` — archive a task thread\n"
@@ -350,6 +359,26 @@ def _cmd_reply(ns: argparse.Namespace) -> str:
     return f"Message sent to Codex task `{task_id}`, waiting for reply..."
 
 
+def _cmd_answer(ns: argparse.Namespace) -> str:
+    task_id = ns.task_id
+    raw = " ".join(ns.answers).strip() if ns.answers else ""
+    if not raw:
+        return "Missing answer. Usage: `/codex answer <task_id> <answer>` or `/codex answer <task_id> <a1> | <a2> | <a3>`"
+    responses = [r.strip() for r in raw.split(" | ")]
+    responses = [r for r in responses if r]
+    if not responses:
+        return "Empty answer."
+    result = _call("codex_tasks", {
+        "action": "answer",
+        "task_id": task_id,
+        "responses": responses,
+    })
+    if not result.get("ok"):
+        return f"Failed: {result.get('error', 'unknown error')}"
+    n = len(responses)
+    return f"Answered {n} question{'s' if n != 1 else ''} for Codex task `{task_id}`."
+
+
 def _cmd_status() -> str:
     result = _call("codex_session", {"action": "status"})
     if not result.get("ok"):
@@ -414,5 +443,8 @@ def handle_slash(raw_args: str) -> str:
 
     if ns.command == "reply":
         return _cmd_reply(ns)
+
+    if ns.command == "answer":
+        return _cmd_answer(ns)
 
     return f"Unknown subcommand `{ns.command}`. Try `/codex help`."
