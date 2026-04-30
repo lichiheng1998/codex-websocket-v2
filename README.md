@@ -1,6 +1,6 @@
-<div align="right">
+<div align="center">
 
-[English](README.md) | [中文](README_CN.md)
+## [English](README.md) | [中文](README_CN.md)
 
 </div>
 
@@ -83,15 +83,15 @@ Manage tasks and threads in the current session.
 |---|---|---|
 | `list` | `show_threads` | List session tasks (or all server threads) |
 | `reply` | `task_id`, `message` | Send a follow-up turn message to a running task |
-| `answer` | `task_id`, `responses[]` | Answer a `requestUserInput` (one string per question) |
-| `approve` | `task_id` | Approve a pending command / elicitation |
+| `answer` | `task_id`, `responses[]` | Answer a `requestUserInput` — one string per question in order |
+| `approve` | `task_id`, `for_session` | Approve a pending command / elicitation. Set `for_session=true` to send `acceptForSession` (command-execution only: stops Codex prompting for similar commands this session) |
 | `deny` | `task_id` | Deny a pending command / elicitation |
-| `archive` | `target` | Archive a task, `all` session tasks, or `allthreads` |
+| `archive` | `target` | Archive a specific task (`task_id`), all session tasks (`all`), or every server thread (`allthreads`). Blocked if the thread is held by another active session. |
 
 > **Note:** `turn/completed` means one turn ended — the thread is still alive. Use `reply` to continue. Only use `codex_revive` for threads no longer tracked in the current session.
 
 ### `codex_revive`
-Restore a thread from a previous session (e.g. after gateway restart) into the active task map.
+Restore a thread from a previous session (e.g. after gateway restart) into the active task map. Blocked if the thread is currently held by another active session.
 
 ### `codex_models`
 List or set the default model for the current session (`list` · `get_default` · `set_default`).
@@ -104,19 +104,22 @@ Inspect or toggle session-level state (`status` · `plan_get/set` · `verbose_ge
 ## Slash Commands
 
 ```
-/codex                              — list this session's tasks
-/codex list [--threads]             — list tasks (or all server threads)
-/codex reply <task_id> <message>    — send a follow-up turn to Codex
-/codex answer <task_id> <answer>    — answer a single Codex question
+/codex                                        — list this session's tasks
+/codex list [--threads]                       — list tasks (or all server threads)
+/codex reply <task_id> <message>              — send a follow-up turn to Codex
+/codex answer <task_id> <answer>              — answer a single Codex question
 /codex answer <task_id> <a1> | <a2> | <a3>   — answer multiple questions (separated by ' | ')
-/codex approve <task_id>            — approve a pending request
-/codex deny <task_id>               — deny a pending request
-/codex archive <task_id|all|allthreads>
-/codex model [<model_id>]           — show or set default model
-/codex models                       — list available models
-/codex plan [on|off]                — toggle plan collaboration mode
-/codex verbose [off|mid|on]         — set notification verbosity
-/codex status                       — show session status
+/codex approve <task_id>                      — approve a pending request
+/codex approve --all <task_id>                — approve and stop prompting for similar commands this session
+/codex deny <task_id>                         — deny a pending request
+/codex archive <task_id>                      — archive a specific task
+/codex archive --all                          — archive all tasks in this session
+/codex archive --threads                      — archive every thread on the server
+/codex model [<model_id>]                     — show or set default model
+/codex models                                 — list available models
+/codex plan [on|off]                          — toggle plan collaboration mode
+/codex verbose [off|mid|on]                   — set notification verbosity
+/codex status                                 — show session status
 /codex help [<subcommand>]
 ```
 

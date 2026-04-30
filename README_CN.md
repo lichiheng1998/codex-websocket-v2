@@ -1,6 +1,6 @@
-<div align="right">
+<div align="center">
 
-[English](README.md) | [中文](README_CN.md)
+## [English](README.md) | [中文](README_CN.md)
 
 </div>
 
@@ -83,15 +83,15 @@ codex --version
 |---|---|---|
 | `list` | `show_threads` | 列出 session task（或服务器全部 thread） |
 | `reply` | `task_id`, `message` | 向运行中的 task 发送后续 turn 消息 |
-| `answer` | `task_id`, `responses[]` | 回答 `requestUserInput`（每个问题一个字符串） |
-| `approve` | `task_id` | 批准挂起的命令 / elicitation |
+| `answer` | `task_id`, `responses[]` | 回答 `requestUserInput`，按顺序每个问题一个字符串 |
+| `approve` | `task_id`, `for_session` | 批准挂起的命令 / elicitation。`for_session=true` 发送 `acceptForSession`（仅限命令执行类请求：本 session 内不再为类似命令弹出审批） |
 | `deny` | `task_id` | 拒绝挂起的命令 / elicitation |
-| `archive` | `target` | 归档单个 task、`all`（当前 session）或 `allthreads`（服务器全部） |
+| `archive` | `target` | 归档指定 task（`task_id`）、当前 session 全部 task（`all`）或服务器全部 thread（`allthreads`）。若 thread 被其他 session 持有则拒绝。 |
 
 > **注意：** `turn/completed` 只代表当前 turn 结束，thread 仍然存活。用 `reply` 继续对话。仅在 thread 不在当前 session 中被追踪时（如 gateway 重启后）才使用 `codex_revive`。
 
 ### `codex_revive`
-将上一个 session 的 thread（如 gateway 重启后丢失的）恢复到当前 session 的 task 表中。
+将上一个 session 的 thread（如 gateway 重启后丢失的）恢复到当前 session 的 task 表中。若 thread 当前被其他活跃 session 持有则拒绝。
 
 ### `codex_models`
 列出或设置当前 session 的默认模型（`list` · `get_default` · `set_default`）。
@@ -104,19 +104,22 @@ codex --version
 ## 斜杠命令
 
 ```
-/codex                              — 列出当前 session 的 task
-/codex list [--threads]             — 列出 task（或服务器全部 thread）
-/codex reply <task_id> <message>    — 向 Codex 发送后续 turn 消息
-/codex answer <task_id> <answer>    — 回答单个 Codex 问题
+/codex                                        — 列出当前 session 的 task
+/codex list [--threads]                       — 列出 task（或服务器全部 thread）
+/codex reply <task_id> <message>              — 向 Codex 发送后续 turn 消息
+/codex answer <task_id> <answer>              — 回答单个 Codex 问题
 /codex answer <task_id> <a1> | <a2> | <a3>   — 回答多个问题（用 ' | ' 分隔）
-/codex approve <task_id>            — 批准挂起的请求
-/codex deny <task_id>               — 拒绝挂起的请求
-/codex archive <task_id|all|allthreads>
-/codex model [<model_id>]           — 查看或设置默认模型
-/codex models                       — 列出可用模型
-/codex plan [on|off]                — 切换 plan 协作模式
-/codex verbose [off|mid|on]         — 设置通知详细程度
-/codex status                       — 查看 session 状态
+/codex approve <task_id>                      — 批准挂起的请求
+/codex approve --all <task_id>                — 批准并本 session 内不再为类似命令弹审批
+/codex deny <task_id>                         — 拒绝挂起的请求
+/codex archive <task_id>                      — 归档指定 task
+/codex archive --all                          — 归档当前 session 全部 task
+/codex archive --threads                      — 归档服务器全部 thread
+/codex model [<model_id>]                     — 查看或设置默认模型
+/codex models                                 — 列出可用模型
+/codex plan [on|off]                          — 切换 plan 协作模式
+/codex verbose [off|mid|on]                   — 设置通知详细程度
+/codex status                                 — 查看 session 状态
 /codex help [<subcommand>]
 ```
 
