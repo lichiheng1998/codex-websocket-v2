@@ -61,6 +61,22 @@ def all_sessions() -> List[CodexSession]:
         return list(_sessions.values())
 
 
+def find_thread_owner(thread_id: str, *, exclude_key: Optional[str] = None) -> Optional[str]:
+    """Return the session_key of the session that tracks *thread_id*, or None.
+
+    Pass ``exclude_key`` to skip the caller's own session so the check only
+    fires for *other* sessions.
+    """
+    with _lock:
+        for key, session in _sessions.items():
+            if key == exclude_key:
+                continue
+            for task in session.tasks.values():
+                if task.thread_id == thread_id:
+                    return key
+    return None
+
+
 def clear() -> None:
     with _lock:
         _sessions.clear()

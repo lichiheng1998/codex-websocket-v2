@@ -48,6 +48,7 @@ from .provider import (
 from .server_manager import CodexServerManager
 from .state import Result, Task, TaskTarget, err, ok
 from .utils import extract_thread_id, new_task_id
+from . import session_registry as _registry
 
 logger = logging.getLogger(__name__)
 
@@ -208,11 +209,19 @@ class CodexSession:
         if not started["ok"]:
             return started
 
-        # Already tracked?
+        # Already tracked in this session?
         for task in self.tasks.values():
             if task.thread_id == thread_id:
                 return ok(task_id=task.task_id, thread_id=thread_id,
                           message="thread already tracked in this session")
+
+        # Refuse to steal a thread owned by another active session.
+        owner = _registry.find_thread_owner(thread_id, exclude_key=self.session_key)
+        if owner is not None:
+            return err(
+                f"thread {thread_id!r} is currently held by session {owner!r} — "
+                "cannot revive into a different session"
+            )
 
         read = self.bridge.run_sync(
             self.bridge.rpc("thread/read", wire.ThreadReadParams(threadId=thread_id), timeout=RPC_TIMEOUT),
@@ -248,6 +257,13 @@ class CodexSession:
         task = self.tasks.get(task_id)
         if task is None:
             return err(f"unknown task id {task_id!r}")
+
+        owner = _registry.find_thread_owner(task.thread_id, exclude_key=self.session_key)
+        if owner is not None:
+            return err(
+                f"thread {task.thread_id!r} is also held by session {owner!r} — "
+                "cannot archive a shared thread"
+            )
 
         archived = self.bridge.run_sync(
             self.bridge.rpc("thread/archive", wire.ThreadArchiveParams(threadId=task.thread_id), timeout=RPC_TIMEOUT),
@@ -313,6 +329,10 @@ class CodexSession:
         for t in listed["data"] or []:
             thread_id = t.get("id") or ""
             if not thread_id:
+                continue
+            owner = _registry.find_thread_owner(thread_id, exclude_key=self.session_key)
+            if owner is not None:
+                errors.append(f"{thread_id}: held by session {owner!r}, skipped")
                 continue
             archived = self.bridge.run_sync(
                 self.bridge.rpc("thread/archive", wire.ThreadArchiveParams(threadId=thread_id), timeout=RPC_TIMEOUT),
