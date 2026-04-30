@@ -1,3 +1,13 @@
+<div align="right">
+
+[English](#english) | [中文](#中文)
+
+</div>
+
+---
+
+<a id="english"></a>
+
 # codex-websocket-v2
 
 A [hermes](https://github.com/lichi/hermes-agent) plugin that bridges hermes sessions to the [OpenAI Codex CLI](https://github.com/openai/codex) app-server over WebSocket, allowing users to delegate coding tasks through any chat platform (Telegram, WeChat, Discord, etc.).
@@ -142,7 +152,7 @@ Inspect or toggle session-level state (`status` · `plan_get/set` · `verbose_ge
 
 ---
 
----
+<a id="中文"></a>
 
 # codex-websocket-v2（中文）
 
