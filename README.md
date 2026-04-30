@@ -41,17 +41,17 @@ hermes session
 ## Installation
 
 ```bash
-# 1. Place this plugin in hermes's plugin directory
-cp -r codex-websocket-v2 ~/.hermes/plugins/
+hermes plugins install lichiheng1998/codex-websocket-v2
+```
 
-# 2. Install Python dependencies
+Then install Python dependencies and verify the Codex CLI is available:
+
+```bash
 pip install websockets>=11.0 pydantic>=2.0
-
-# 3. Ensure the codex CLI is installed and logged in
 codex --version
 ```
 
-hermes will auto-discover and register the plugin on startup.
+hermes will auto-discover and register the plugin on the next startup.
 
 ---
 
@@ -187,17 +187,17 @@ hermes session
 ## 安装
 
 ```bash
-# 1. 将插件放入 hermes 插件目录
-cp -r codex-websocket-v2 ~/.hermes/plugins/
+hermes plugins install lichiheng1998/codex-websocket-v2
+```
 
-# 2. 安装 Python 依赖
+然后安装 Python 依赖并确认 Codex CLI 可用：
+
+```bash
 pip install websockets>=11.0 pydantic>=2.0
-
-# 3. 确保 Codex CLI 已安装并登录
 codex --version
 ```
 
-hermes 启动时会自动发现并注册插件。
+下次启动 hermes 时插件会自动注册。
 
 ---
 
