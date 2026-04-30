@@ -106,7 +106,15 @@ def _build_parser() -> argparse.ArgumentParser:
     deny_p.add_argument("task_id")
 
     archive_p = sub.add_parser("archive", add_help=True, help="archive tasks or threads")
-    archive_p.add_argument("target", help="task_id, 'all', or 'allthreads'")
+    archive_p.add_argument("task_id", nargs="?", help="task_id to archive")
+    archive_p.add_argument(
+        "--all", "-a", dest="all_tasks", action="store_true",
+        help="archive all tasks in this session",
+    )
+    archive_p.add_argument(
+        "--threads", "-t", dest="all_threads", action="store_true",
+        help="archive every thread on the server",
+    )
 
     plan_p = sub.add_parser("plan", add_help=True, help="show or toggle plan mode")
     plan_p.add_argument("toggle", nargs="?", help="'on' or 'off'; omit to query")
@@ -159,9 +167,9 @@ def _cmd_help() -> str:
         "  `/codex approve <task_id>` — approve a pending Codex request\n"
         "  `/codex approve --all <task_id>` — approve and stop prompting for similar commands this session\n"
         "  `/codex deny <task_id>` — deny a pending Codex request\n"
-        "  `/codex archive <task_id>` — archive a task thread\n"
-        "  `/codex archive all` — archive all tasks in this session\n"
-        "  `/codex archive allthreads` — archive every thread on the server\n"
+        "  `/codex archive <task_id>` — archive a specific task\n"
+        "  `/codex archive --all` — archive all tasks in this session\n"
+        "  `/codex archive --threads` — archive every thread on the server\n"
         "  `/codex plan on|off` — toggle plan mode (this session)\n"
         "  `/codex verbose off|mid|on` — set verbosity (off = last item + turn end; mid = agentMessage + turn end; on = all)\n"
         "  `/codex status` — show session status"
@@ -283,7 +291,16 @@ def _cmd_deny(task_id: str) -> str:
     return f"Failed: {result.get('error', 'unknown error')}"
 
 
-def _cmd_archive(target: str) -> str:
+def _cmd_archive(ns: argparse.Namespace) -> str:
+    if ns.all_threads:
+        target = "allthreads"
+    elif ns.all_tasks:
+        target = "all"
+    elif ns.task_id:
+        target = ns.task_id
+    else:
+        return "Specify a task_id, --all, or --threads. Usage: `/codex archive [--all | --threads | <task_id>]`"
+
     result = _call("codex_tasks", {"action": "archive", "target": target})
     scope = result.get("scope")
 
@@ -439,7 +456,7 @@ def handle_slash(raw_args: str) -> str:
         return _cmd_deny(ns.task_id)
 
     if ns.command == "archive":
-        return _cmd_archive(ns.target)
+        return _cmd_archive(ns)
 
     if ns.command == "plan":
         return _cmd_plan(ns.toggle)
