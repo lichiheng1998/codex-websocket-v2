@@ -327,8 +327,12 @@ class CodexSession:
 
     # ── Approval / Input resolution ──────────────────────────────────────────
 
-    def approve_task(self, task_id: str, decision: str) -> Result:
-        """Resolve a pending command/elicitation request by sending a WS response."""
+    def approve_task(self, task_id: str, decision: str, *, for_session: bool = False) -> Result:
+        """Resolve a pending command/elicitation request by sending a WS response.
+
+        Pass ``for_session=True`` with decision="accept" to send ``acceptForSession``
+        (only valid for command-execution approvals, not fileChange/permissions).
+        """
         task = self.tasks.get(task_id)
         if task is None or task.request_rpc_id is None:
             return err(f"no pending request for task `{task_id}`")
@@ -339,7 +343,16 @@ class CodexSession:
             action = "accept" if decision == "accept" else "decline"
             payload = {"action": action, "content": None}
         else:  # "command" — covers commandExecution / fileChange / permissions
-            payload = {"decision": decision}
+            cmd_type = (task.request_payload or {}).get("cmd_type", "exec")
+            if for_session and decision == "accept":
+                if cmd_type != "exec":
+                    return err(
+                        f"acceptForSession is only supported for command-execution approvals, "
+                        f"not {cmd_type!r}"
+                    )
+                payload = {"decision": "acceptForSession"}
+            else:
+                payload = {"decision": decision}
 
         rpc_id = task.request_rpc_id
         send = self.bridge.run_sync(

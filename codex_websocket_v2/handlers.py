@@ -130,7 +130,7 @@ class MessageHandler:
             self._approval_footer(task_id),
         ])
         self.session.stash_request(task, rpc_id, "command",
-                                   {"preview": cmd_preview, "reason": reason})
+                                   {"preview": cmd_preview, "reason": reason, "cmd_type": "exec"})
         await self.session.notify(notification)
 
     async def _handle_file_change_approval(self, params: Any, rpc_id: Any) -> None:
@@ -147,7 +147,7 @@ class MessageHandler:
             self._approval_footer(task_id),
         ])
         self.session.stash_request(task, rpc_id, "command",
-                                   {"preview": preview, "reason": reason})
+                                   {"preview": preview, "reason": reason, "cmd_type": "fileChange"})
         await self.session.notify(notification)
 
     async def _handle_permissions_approval(self, params: Any, rpc_id: Any) -> None:
@@ -173,7 +173,7 @@ class MessageHandler:
             self._approval_footer(task_id),
         ])
         self.session.stash_request(task, rpc_id, "command",
-                                   {"preview": preview, "reason": reason})
+                                   {"preview": preview, "reason": reason, "cmd_type": "permissions"})
         await self.session.notify(notification)
 
     async def _handle_elicitation_request(self, params: Any, rpc_id: Any) -> None:

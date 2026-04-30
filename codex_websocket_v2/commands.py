@@ -95,9 +95,15 @@ def _build_parser() -> argparse.ArgumentParser:
     answer_p.add_argument("task_id")
     answer_p.add_argument("answers", nargs=argparse.REMAINDER)
 
-    for name in ("approve", "deny"):
-        p = sub.add_parser(name, add_help=True, help=f"{name} a pending request")
-        p.add_argument("task_id")
+    approve_p = sub.add_parser("approve", add_help=True, help="approve a pending request")
+    approve_p.add_argument("task_id")
+    approve_p.add_argument(
+        "--all", "-a", dest="for_session", action="store_true",
+        help="send acceptForSession (stop prompting for similar commands this session)",
+    )
+
+    deny_p = sub.add_parser("deny", add_help=True, help="deny a pending request")
+    deny_p.add_argument("task_id")
 
     archive_p = sub.add_parser("archive", add_help=True, help="archive tasks or threads")
     archive_p.add_argument("target", help="task_id, 'all', or 'allthreads'")
@@ -151,6 +157,7 @@ def _cmd_help() -> str:
         "  `/codex answer <task_id> <answer>` — answer a Codex question\n"
         "  `/codex answer <task_id> <a1> | <a2> | <a3>` — answer multiple questions (separate with ' | ')\n"
         "  `/codex approve <task_id>` — approve a pending Codex request\n"
+        "  `/codex approve --all <task_id>` — approve and stop prompting for similar commands this session\n"
         "  `/codex deny <task_id>` — deny a pending Codex request\n"
         "  `/codex archive <task_id>` — archive a task thread\n"
         "  `/codex archive all` — archive all tasks in this session\n"
@@ -260,9 +267,11 @@ def _cmd_model(model_id: Optional[str]) -> str:
     return f"Default model set to `{result['model']}`."
 
 
-def _cmd_approve(task_id: str) -> str:
-    result = _call("codex_tasks", {"action": "approve", "task_id": task_id})
+def _cmd_approve(task_id: str, for_session: bool = False) -> str:
+    result = _call("codex_tasks", {"action": "approve", "task_id": task_id, "for_session": for_session})
     if result.get("ok"):
+        if for_session:
+            return f"Approved task `{task_id}` for session (similar commands won't prompt again)."
         return f"Approved task `{task_id}`."
     return f"Failed: {result.get('error', 'unknown error')}"
 
@@ -424,7 +433,7 @@ def handle_slash(raw_args: str) -> str:
         return _cmd_model(ns.model_id)
 
     if ns.command == "approve":
-        return _cmd_approve(ns.task_id)
+        return _cmd_approve(ns.task_id, for_session=getattr(ns, "for_session", False))
 
     if ns.command == "deny":
         return _cmd_deny(ns.task_id)

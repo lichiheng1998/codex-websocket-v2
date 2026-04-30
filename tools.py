@@ -134,13 +134,14 @@ def codex_tasks(args: dict, **kwargs: Any) -> str:
         if not task_id:
             return _error(f"task_id is required for {action}")
         decision = "accept" if action == "approve" else "decline"
-        result = session.approve_task(task_id, decision)
+        for_session = bool(args.get("for_session")) if action == "approve" else False
+        result = session.approve_task(task_id, decision, for_session=for_session)
         if not result.get("ok"):
             return _error(result.get("error", "unknown error"))
         return json.dumps({
             "ok": True,
             "task_id": task_id,
-            "decision": decision,
+            "decision": "acceptForSession" if for_session else decision,
         }, ensure_ascii=False)
 
     if action == "archive":

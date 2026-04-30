@@ -100,6 +100,14 @@ CODEX_TASKS = {
                     "or 'allthreads' (every thread on the server)."
                 ),
             },
+            "for_session": {
+                "type": "boolean",
+                "description": (
+                    "For approve: send acceptForSession instead of accept. "
+                    "Only valid for command-execution approvals (not fileChange or permissions). "
+                    "Tells Codex to stop prompting for similar commands for the rest of the session."
+                ),
+            },
             "show_threads": {
                 "type": "boolean",
                 "description": "For list: include all server threads instead of session tasks.",
