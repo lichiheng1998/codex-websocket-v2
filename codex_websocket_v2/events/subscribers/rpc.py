@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from ..events import RpcErrorEvent, RpcResponseEvent
+from ..models import RpcErrorEvent, RpcResponseEvent
 
 if TYPE_CHECKING:
-    from ..session import CodexSession
+    from ...core.session import CodexSession
 
 
 class RpcResponseSubscriber:

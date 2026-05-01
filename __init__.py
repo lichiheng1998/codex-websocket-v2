@@ -19,8 +19,8 @@ def register(ctx) -> None:
     import asyncio
     from . import schemas
     from . import tools
-    from .codex_websocket_v2 import commands
-    from .codex_websocket_v2 import notify
+    from .codex_websocket_v2.surfaces import commands
+    from .codex_websocket_v2.surfaces import notify
 
     # Capture the hermes main event loop so cross-thread sends (codex bridge
     # runs on its own loop; weixin's aiohttp session is bound to the main
@@ -81,8 +81,8 @@ def register(ctx) -> None:
 
 
 def _shutdown_all() -> None:
-    from .codex_websocket_v2 import session_registry
-    from .codex_websocket_v2.server_manager import CodexServerManager
+    from .codex_websocket_v2.core import session_registry
+    from .codex_websocket_v2.core.server_manager import CodexServerManager
 
     for session in session_registry.all_sessions():
         try:

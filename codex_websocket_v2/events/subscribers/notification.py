@@ -5,11 +5,11 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from ..events import ItemCompletedEvent, TurnCompletedEvent
+from ..models import ItemCompletedEvent, TurnCompletedEvent
 
 if TYPE_CHECKING:
-    from ..session import CodexSession
-    from ..state import Task
+    from ...core.session import CodexSession
+    from ...core.state import Task
 
 logger = logging.getLogger(__name__)
 

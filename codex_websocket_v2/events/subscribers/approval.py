@@ -1,9 +1,4 @@
-"""Approval request handling and response helpers.
-
-This module owns inbound approval request formatting/stashing and the mapping
-from approval request subtype to the JSON-RPC ``result`` payload expected by
-codex-app-server-schema.
-"""
+"""Subscriber and response helpers for approval requests."""
 
 from __future__ import annotations
 
@@ -11,10 +6,12 @@ from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from pydantic import BaseModel
 
-from .state import Result, Task, err, ok
+from ..models import ApprovalRequestedEvent
+
+from ...core.state import Result, Task, err, ok
 
 if TYPE_CHECKING:
-    from .session import CodexSession
+    from ...core.session import CodexSession
 
 
 MODERN_COMMAND_APPROVAL = "commandExecution"
@@ -25,24 +22,22 @@ LEGACY_APPLY_PATCH_APPROVAL = "legacyApplyPatch"
 MAX_APPROVAL_CMD_PREVIEW = 200
 
 
-class ApprovalRequestHandler:
+class ApprovalRequestSubscriber:
     def __init__(self, session: "CodexSession") -> None:
         self.session = session
 
-    async def handle(self, method: str, params: Any, rpc_id: Any) -> bool:
-        if method in ("item/commandExecution/requestApproval", "execCommandApproval"):
-            await self._handle_command_approval(params, rpc_id)
-            return True
-        if method == "applyPatchApproval":
-            await self._handle_apply_patch_approval(params, rpc_id)
-            return True
-        if method == "item/fileChange/requestApproval":
-            await self._handle_file_change_approval(params, rpc_id)
-            return True
-        if method == "item/permissions/requestApproval":
-            await self._handle_permissions_approval(params, rpc_id)
-            return True
-        return False
+    async def __call__(self, event: ApprovalRequestedEvent) -> bool:
+        if event.approval_kind in (MODERN_COMMAND_APPROVAL, LEGACY_EXEC_APPROVAL):
+            await self._handle_command_approval(event.params, event.rpc_id, event.approval_kind)
+        elif event.approval_kind == LEGACY_APPLY_PATCH_APPROVAL:
+            await self._handle_apply_patch_approval(event.params, event.rpc_id)
+        elif event.approval_kind == FILE_CHANGE_APPROVAL:
+            await self._handle_file_change_approval(event.params, event.rpc_id)
+        elif event.approval_kind == PERMISSIONS_APPROVAL:
+            await self._handle_permissions_approval(event.params, event.rpc_id)
+        else:
+            return False
+        return True
 
     def approval_meta(self, params: Any) -> tuple[Optional[Task], str]:
         thread_id = getattr(params, "threadId", None) or getattr(params, "conversationId", None)
@@ -57,7 +52,7 @@ class ApprovalRequestHandler:
             f"{decline_label}: `/codex deny {task_id}`"
         )
 
-    async def _handle_command_approval(self, params: Any, rpc_id: Any) -> None:
+    async def _handle_command_approval(self, params: Any, rpc_id: Any, approval_kind: str) -> None:
         task, task_id = self.approval_meta(params)
         reason = (getattr(params, "reason", "") or "").strip() or "Codex approval"
         command = getattr(params, "command", None) or getattr(params, "commandText", None) or ""
@@ -73,10 +68,8 @@ class ApprovalRequestHandler:
             "",
             self.approval_footer(task_id),
         ])
-        method_name = getattr(getattr(params, "__class__", None), "__name__", "")
-        cmd_type = LEGACY_EXEC_APPROVAL if method_name == "ExecCommandApprovalParams" else MODERN_COMMAND_APPROVAL
         self.session.stash_request(task, rpc_id, "command",
-                                   {"preview": cmd_preview, "reason": reason, "cmd_type": cmd_type})
+                                   {"preview": cmd_preview, "reason": reason, "cmd_type": approval_kind})
         await self.session.notify(notification)
 
     async def _handle_file_change_approval(self, params: Any, rpc_id: Any) -> None:

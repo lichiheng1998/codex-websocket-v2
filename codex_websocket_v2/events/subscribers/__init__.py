@@ -8,7 +8,7 @@ from .input import UserInputRequestSubscriber
 from .notification import NotificationSubscriber
 from .rpc import RpcErrorSubscriber, RpcResponseSubscriber
 from .unhandled import UnknownFrameSubscriber, UnhandledNotificationSubscriber, UnhandledRequestSubscriber
-from ..events import (
+from ..models import (
     ApprovalRequestedEvent,
     ElicitationRequestedEvent,
     ItemCompletedEvent,

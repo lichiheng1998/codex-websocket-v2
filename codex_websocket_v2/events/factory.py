@@ -4,15 +4,15 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Optional
 
-from . import wire
-from .approval_handler import (
+from ..transport import wire
+from .subscribers.approval import (
     FILE_CHANGE_APPROVAL,
     LEGACY_APPLY_PATCH_APPROVAL,
     LEGACY_EXEC_APPROVAL,
     MODERN_COMMAND_APPROVAL,
     PERMISSIONS_APPROVAL,
 )
-from .events import (
+from .models import (
     ApprovalRequestedEvent,
     ElicitationRequestedEvent,
     ItemCompletedEvent,
@@ -26,7 +26,7 @@ from .events import (
 )
 
 if TYPE_CHECKING:
-    from .session import CodexSession
+    from ..core.session import CodexSession
 
 APPROVAL_METHODS = {
     "item/commandExecution/requestApproval": MODERN_COMMAND_APPROVAL,

@@ -6,10 +6,10 @@ import json
 import logging
 from typing import TYPE_CHECKING
 
-from ..events import UserInputRequestedEvent
+from ..models import UserInputRequestedEvent
 
 if TYPE_CHECKING:
-    from ..session import CodexSession
+    from ...core.session import CodexSession
 
 logger = logging.getLogger(__name__)
 

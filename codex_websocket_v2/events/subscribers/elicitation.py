@@ -5,11 +5,11 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
-from ..approval_handler import ApprovalRequestHandler
-from ..events import ElicitationRequestedEvent
+from .approval import ApprovalRequestSubscriber
+from ..models import ElicitationRequestedEvent
 
 if TYPE_CHECKING:
-    from ..session import CodexSession
+    from ...core.session import CodexSession
 
 MAX_ELICITATION_SCHEMA_PREVIEW = 300
 
@@ -31,7 +31,7 @@ class ElicitationSubscriber:
             url = getattr(elicitation, "url", "") or ""
             heading = f"🔗 `{task_id}` MCP `{server_name}` needs you to visit a link:"
             body = f"{url}\n{elicit_msg}"
-            footer = ApprovalRequestHandler.approval_footer(task_id, accept_label="When done", decline_label="Cancel")
+            footer = ApprovalRequestSubscriber.approval_footer(task_id, accept_label="When done", decline_label="Cancel")
         else:
             schema = getattr(elicitation, "requestedSchema", None) if elicitation else None
             schema_json = json.dumps(
@@ -40,7 +40,7 @@ class ElicitationSubscriber:
             )[:MAX_ELICITATION_SCHEMA_PREVIEW]
             heading = f"❓ `{task_id}` MCP `{server_name}` requests input:"
             body = f"{elicit_msg}\nSchema: `{schema_json}`"
-            footer = ApprovalRequestHandler.approval_footer(task_id, accept_label="Accept", decline_label="Decline")
+            footer = ApprovalRequestSubscriber.approval_footer(task_id, accept_label="Accept", decline_label="Decline")
 
         notification = "\n".join([heading, body, "", footer])
         self.session.stash_request(task, event.rpc_id, "elicitation",

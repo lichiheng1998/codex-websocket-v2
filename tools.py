@@ -6,8 +6,8 @@ import json
 import os
 from typing import Any
 
-from .codex_websocket_v2.policies import DEFAULT_APPROVAL_POLICY
-from .codex_websocket_v2.session_registry import resolve_current_session
+from .codex_websocket_v2.core.policies import DEFAULT_APPROVAL_POLICY
+from .codex_websocket_v2.core.session_registry import resolve_current_session
 
 
 def _error(msg: str) -> str:

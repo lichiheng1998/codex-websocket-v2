@@ -1,6 +1,6 @@
 """Tool schemas for the codex-websocket-v2 plugin (LLM-facing)."""
 
-from .codex_websocket_v2.policies import DEFAULT_APPROVAL_POLICY
+from .codex_websocket_v2.core.policies import DEFAULT_APPROVAL_POLICY
 
 CODEX_REVIVE = {
     "name": "codex_revive",
