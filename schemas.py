@@ -1,6 +1,6 @@
 """Tool schemas for the codex-websocket-v2 plugin (LLM-facing)."""
 
-from .codex_websocket_v2.policies import DEFAULT_APPROVAL_POLICY, DEFAULT_SANDBOX_POLICY
+from .codex_websocket_v2.policies import DEFAULT_APPROVAL_POLICY
 
 CODEX_REVIVE = {
     "name": "codex_revive",
@@ -13,11 +13,9 @@ CODEX_REVIVE = {
         "turn/completed notification. turn/completed means one turn finished "
         "and Codex is idle waiting for the next prompt; the thread is still "
         "alive and tracked. Use codex_tasks reply to continue it instead. "
-        "Codex's `thread/read` does NOT return the thread's last "
-        "`model`/`sandbox_policy`/`approval_policy` (those are per-turn "
-        "overrides), so pass them explicitly if the user wants follow-up "
-        "turns to keep the original configuration; otherwise plugin defaults "
-        "are used. Plan collaboration mode is a session-wide toggle — use "
+        "The session's sandbox_policy (set via codex_session sandbox_set or "
+        "/codex sandbox) is used automatically for revived threads. "
+        "Plan collaboration mode is a session-wide toggle — use "
         "`/codex plan on|off` rather than passing it here."
     ),
     "parameters": {
@@ -27,20 +25,13 @@ CODEX_REVIVE = {
                 "type": "string",
                 "description": "Full Codex thread UUID to revive.",
             },
-            "sandbox_policy": {
-                "type": "string",
-                "enum": ["read-only", "workspace-write", "danger-full-access"],
-                "description": (
-                    f"Sandbox policy for follow-up turns (default "
-                    f"'{DEFAULT_SANDBOX_POLICY}')."
-                ),
-            },
             "approval_policy": {
                 "type": "string",
                 "enum": ["on-request", "on-failure", "never", "untrusted"],
                 "description": (
-                    f"Approval policy for follow-up turns (default "
-                    f"'{DEFAULT_APPROVAL_POLICY}')."
+                    f"Shell command execution prompting for follow-up turns "
+                    f"(default '{DEFAULT_APPROVAL_POLICY}'). Does NOT control "
+                    "file writes — use codex_session sandbox_set for that."
                 ),
             },
         },
@@ -104,8 +95,8 @@ CODEX_TASKS = {
                 "type": "boolean",
                 "description": (
                     "For approve: send acceptForSession instead of accept. "
-                    "Only valid for command-execution approvals (not fileChange or permissions). "
-                    "Tells Codex to stop prompting for similar commands for the rest of the session."
+                    "Valid for command-execution and file-change approvals (not permissions). "
+                    "Tells Codex to stop prompting for similar commands/writes for the rest of the session."
                 ),
             },
             "show_threads": {
@@ -150,15 +141,21 @@ CODEX_SESSION = {
     "description": (
         "Inspect or toggle session-level Codex state. "
         "'status' returns a snapshot (connection, active_tasks, total_threads, "
-        "model, mode, verbose). 'plan_get'/'plan_set' read or set plan-mode "
+        "model, mode, verbose, sandbox_policy). "
+        "'plan_get'/'plan_set' read or set plan-mode "
         "(when enabled, future turns use collaborationMode=plan). "
         "'verbose_get'/'verbose_set' read or set verbose level: "
         "'off' (last item/completed + turn/completed), "
         "'mid' (agentMessage + turn/completed), "
         "'on' (all item/completed notifications). "
+        "'sandbox_get'/'sandbox_set' read or set the session default sandbox "
+        "policy applied to all new and revived tasks. "
+        "'read-only' = every file write triggers a fileChange approval; "
+        "'workspace-write' = Codex writes freely inside cwd (no approval); "
+        "'danger-full-access' = no restrictions. "
         "'plan_set' requires enabled=true|false. 'verbose_set' requires level "
-        "as a string ('off'/'mid'/'on'). "
-        "Mirrors /codex status / plan / verbose."
+        "('off'/'mid'/'on'). 'sandbox_set' requires sandbox_policy. "
+        "Mirrors /codex status / plan / verbose / sandbox."
     ),
     "parameters": {
         "type": "object",
@@ -171,6 +168,8 @@ CODEX_SESSION = {
                     "plan_set",
                     "verbose_get",
                     "verbose_set",
+                    "sandbox_get",
+                    "sandbox_set",
                 ],
             },
             "enabled": {
@@ -181,6 +180,16 @@ CODEX_SESSION = {
                 "type": "string",
                 "enum": ["off", "mid", "on"],
                 "description": "Required for verbose_set. 'off'=last item + turn end, 'mid'=agentMessage + turn end, 'on'=all items.",
+            },
+            "sandbox_policy": {
+                "type": "string",
+                "enum": ["read-only", "workspace-write", "danger-full-access"],
+                "description": (
+                    "Required for sandbox_set. Controls file write access for "
+                    "all subsequent tasks: 'read-only' triggers fileChange "
+                    "approvals on every write; 'workspace-write' allows free "
+                    "writes inside cwd; 'danger-full-access' removes all limits."
+                ),
             },
         },
         "required": ["action"],
@@ -204,6 +213,10 @@ CODEX_TASK = {
         "(e.g. after a gateway restart). "
         "If Codex asks one or more questions (requestUserInput), answer with "
         "codex_tasks answer (not reply). "
+        "File write access is controlled by the session sandbox_policy "
+        "(default: workspace-write = Codex writes freely inside cwd; "
+        "read-only = every write triggers a fileChange approval). "
+        "Change it with codex_session sandbox_set or /codex sandbox. "
         "Use this when a task is well-scoped for a code-focused sub-agent "
         "(bug fix, feature, refactor). After calling, report the task_id to "
         "the user and return control — do NOT poll for the result."
@@ -223,14 +236,12 @@ CODEX_TASK = {
                 "type": "string",
                 "enum": ["on-request", "on-failure", "never", "untrusted"],
                 "description": (
-                    f"Codex approval policy (default '{DEFAULT_APPROVAL_POLICY}'). "
-                    "'on-request' surfaces approvals to the user in chat."
+                    f"Controls shell command execution prompting only (default "
+                    f"'{DEFAULT_APPROVAL_POLICY}'). 'on-request' = every shell "
+                    "command triggers an approval request; 'never' = all "
+                    "commands run without prompting. Does NOT affect file "
+                    "writes — use codex_session sandbox_set for that."
                 ),
-            },
-            "sandbox_policy": {
-                "type": "string",
-                "enum": ["read-only", "workspace-write", "danger-full-access"],
-                "description": f"Codex sandbox policy (default '{DEFAULT_SANDBOX_POLICY}').",
             },
             "base_instructions": {
                 "type": "string",

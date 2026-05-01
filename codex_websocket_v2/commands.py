@@ -1,7 +1,7 @@
 """Slash command handlers for /codex (WebSocket v2 — per-session).
 
 Subcommands: list [--threads], models, model, reply, answer, approve, deny,
-archive, plan, verbose, status, help.
+archive, plan, verbose, sandbox, status, help.
 
 Each subcommand parses argv with argparse, then delegates to a registered
 tool via ``_DISPATCH`` (wired by ``__init__.register()``). The tool's JSON
@@ -122,6 +122,12 @@ def _build_parser() -> argparse.ArgumentParser:
     verbose_p = sub.add_parser("verbose", add_help=True, help="show or set verbose level")
     verbose_p.add_argument("level", nargs="?", help="'off', 'mid', or 'on'; omit to query")
 
+    sandbox_p = sub.add_parser("sandbox", add_help=True, help="show or set sandbox policy")
+    sandbox_p.add_argument(
+        "policy", nargs="?",
+        help="'read' (read-only), 'write' (workspace-write), 'full' (danger-full-access); omit to query",
+    )
+
     sub.add_parser("status", add_help=True, help="show session status")
 
     help_p = sub.add_parser("help", add_help=True, help="show help")
@@ -172,6 +178,8 @@ def _cmd_help() -> str:
         "  `/codex archive --threads` — archive every thread on the server\n"
         "  `/codex plan on|off` — toggle plan mode (this session)\n"
         "  `/codex verbose off|mid|on` — set verbosity (off = last item + turn end; mid = agentMessage + turn end; on = all)\n"
+        "  `/codex sandbox` — show current sandbox policy\n"
+        "  `/codex sandbox read|write|full` — set sandbox policy (read-only / workspace-write / danger-full-access)\n"
         "  `/codex status` — show session status"
     )
 
@@ -405,6 +413,39 @@ def _cmd_answer(ns: argparse.Namespace) -> str:
     return f"Answered {n} question{'s' if n != 1 else ''} for Codex task `{task_id}`."
 
 
+_SANDBOX_ALIASES = {
+    "read": "read-only",
+    "readonly": "read-only",
+    "read-only": "read-only",
+    "write": "workspace-write",
+    "workspace-write": "workspace-write",
+    "workspacewrite": "workspace-write",
+    "full": "danger-full-access",
+    "danger-full-access": "danger-full-access",
+    "dangerfullaccess": "danger-full-access",
+}
+
+
+def _cmd_sandbox(policy: Optional[str]) -> str:
+    if policy is None:
+        result = _call("codex_session", {"action": "sandbox_get"})
+        if not result.get("ok"):
+            return f"Failed: {result.get('error', 'unknown error')}"
+        return f"Sandbox policy is `{result.get('sandbox_policy', '')}`. Options: read / write / full"
+    normalized = _SANDBOX_ALIASES.get(policy.strip().lower())
+    if normalized is None:
+        return f"Unknown policy `{policy}`. Use: `/codex sandbox read|write|full`"
+    result = _call("codex_session", {"action": "sandbox_set", "sandbox_policy": normalized})
+    if not result.get("ok"):
+        return f"Failed: {result.get('error', 'unknown error')}"
+    descriptions = {
+        "read-only": "every file write triggers a fileChange approval",
+        "workspace-write": "Codex writes freely inside cwd",
+        "danger-full-access": "no restrictions",
+    }
+    return f"Sandbox policy set to `{normalized}` — {descriptions[normalized]}."
+
+
 def _cmd_status() -> str:
     result = _call("codex_session", {"action": "status"})
     if not result.get("ok"):
@@ -419,7 +460,8 @@ def _cmd_status() -> str:
         f"• Total threads: {result['total_threads']}\n"
         f"• Default model: `{result['model']}`\n"
         f"• Mode: `{result['mode']}`\n"
-        f"• Verbose: `{result['verbose']}`"
+        f"• Verbose: `{result['verbose']}`\n"
+        f"• Sandbox: `{result.get('sandbox_policy', 'workspace-write')}`"
     )
 
 
@@ -463,6 +505,9 @@ def handle_slash(raw_args: str) -> str:
 
     if ns.command == "verbose":
         return _cmd_verbose(ns.level)
+
+    if ns.command == "sandbox":
+        return _cmd_sandbox(ns.policy)
 
     if ns.command == "status":
         return _cmd_status()

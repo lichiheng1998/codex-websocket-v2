@@ -72,9 +72,10 @@ Start a new coding task in a background Codex thread. Returns immediately with a
 |---|---|---|
 | `cwd` | string (required) | Absolute path to the project directory |
 | `prompt` | string (required) | Task description / instructions for Codex |
-| `approval_policy` | enum | `on-request` · `on-failure` · `never` · `untrusted` (default: `never`) |
-| `sandbox_policy` | enum | `read-only` · `workspace-write` · `danger-full-access` (default: `workspace-write`) |
+| `approval_policy` | enum | `on-request` · `on-failure` · `never` · `untrusted` (default: `never`) — shell command execution only; does **not** affect file writes |
 | `base_instructions` | string | Optional instructions prepended to the thread |
+
+> **File write access** is controlled by the session-level `sandbox_policy` (set via `codex_session sandbox_set` or `/codex sandbox`). `workspace-write` (default) allows free writes inside `cwd`; `read-only` triggers a `fileChange` approval for every write.
 
 ### `codex_tasks`
 Manage tasks and threads in the current session.
@@ -97,7 +98,15 @@ Restore a thread from a previous session (e.g. after gateway restart) into the a
 List or set the default model for the current session (`list` · `get_default` · `set_default`).
 
 ### `codex_session`
-Inspect or toggle session-level state (`status` · `plan_get/set` · `verbose_get/set`).
+Inspect or toggle session-level state (`status` · `plan_get/set` · `verbose_get/set` · `sandbox_get/set`).
+
+The `sandbox_set` action sets the default file write policy for all new and revived tasks:
+
+| Value | Behaviour |
+|---|---|
+| `read-only` | Every file write triggers a `fileChange` approval request |
+| `workspace-write` | Codex writes freely inside `cwd` (default) |
+| `danger-full-access` | No restrictions |
 
 ---
 
@@ -119,6 +128,7 @@ Inspect or toggle session-level state (`status` · `plan_get/set` · `verbose_ge
 /codex models                                 — list available models
 /codex plan [on|off]                          — toggle plan collaboration mode
 /codex verbose [off|mid|on]                   — set notification verbosity
+/codex sandbox [read|write|full]              — show or set sandbox policy
 /codex status                                 — show session status
 /codex help [<subcommand>]
 ```

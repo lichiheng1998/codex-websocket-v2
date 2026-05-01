@@ -20,11 +20,11 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from . import wire
+from .approval_handler import ApprovalRequestHandler
 from .notify import notify_user
-from .state import Task
 
 if TYPE_CHECKING:
     from .session import CodexSession
@@ -34,12 +34,12 @@ logger = logging.getLogger(__name__)
 MAX_NOTIFY_TEXT = 4000
 MAX_COMMAND_OUTPUT = 1000
 MAX_ELICITATION_SCHEMA_PREVIEW = 300
-MAX_APPROVAL_CMD_PREVIEW = 200
 
 
 class MessageHandler:
     def __init__(self, session: "CodexSession") -> None:
         self.session = session
+        self.approvals = ApprovalRequestHandler(session)
 
     # ── Top-level dispatch ───────────────────────────────────────────────────
 
@@ -82,14 +82,9 @@ class MessageHandler:
         rpc_id = req.id.root
         params = req.params
 
-        if method == "item/commandExecution/requestApproval" \
-                or method in ("execCommandApproval", "applyPatchApproval"):
-            await self._handle_command_approval(params, rpc_id)
-        elif method == "item/fileChange/requestApproval":
-            await self._handle_file_change_approval(params, rpc_id)
-        elif method == "item/permissions/requestApproval":
-            await self._handle_permissions_approval(params, rpc_id)
-        elif method == "item/tool/requestUserInput":
+        if await self.approvals.handle(method, params, rpc_id):
+            return
+        if method == "item/tool/requestUserInput":
             await self._handle_user_input_request(params, rpc_id)
         elif method == "mcpServer/elicitation/request":
             await self._handle_elicitation_request(params, rpc_id)
@@ -100,85 +95,9 @@ class MessageHandler:
                 "error": {"code": -32601, "message": f"unhandled: {method}"},
             }))
 
-    def _approval_meta(self, params: Any) -> tuple[Optional[Task], str]:
-        thread_id = getattr(params, "threadId", None) or getattr(params, "conversationId", None)
-        task = self.session.task_for_thread(thread_id) if thread_id else None
-        task_id = task.task_id if task else "?"
-        return task, task_id
-
-    @staticmethod
-    def _approval_footer(task_id: str, *, accept_label: str = "Approve", decline_label: str = "Deny") -> str:
-        return (
-            f"{accept_label}: `/codex approve {task_id}`\n"
-            f"{decline_label}: `/codex deny {task_id}`"
-        )
-
-    async def _handle_command_approval(self, params: Any, rpc_id: Any) -> None:
-        task, task_id = self._approval_meta(params)
-        reason = (getattr(params, "reason", "") or "").strip() or "Codex approval"
-        command = getattr(params, "command", None) or getattr(params, "commandText", None) or ""
-        if isinstance(command, list):
-            command = " ".join(str(x) for x in command)
-        cmd_str = str(command) or "(codex command)"
-        cmd_preview = cmd_str[:MAX_APPROVAL_CMD_PREVIEW]
-
-        notification = "\n".join([
-            f"⚠️ Codex task `{task_id}` requests to run a command:",
-            f"```\n{cmd_preview}\n```",
-            f"Reason: {reason}",
-            "",
-            self._approval_footer(task_id),
-        ])
-        self.session.stash_request(task, rpc_id, "command",
-                                   {"preview": cmd_preview, "reason": reason, "cmd_type": "exec"})
-        await self.session.notify(notification)
-
-    async def _handle_file_change_approval(self, params: Any, rpc_id: Any) -> None:
-        task, task_id = self._approval_meta(params)
-        reason = (getattr(params, "reason", "") or "").strip() or "Codex file change"
-        change = getattr(params, "fileChange", None)
-        preview = str(change)[:MAX_APPROVAL_CMD_PREVIEW] if change else "(file change)"
-
-        notification = "\n".join([
-            f"⚠️ Codex task `{task_id}` requests file changes:",
-            f"```\n{preview}\n```",
-            f"Reason: {reason}",
-            "",
-            self._approval_footer(task_id),
-        ])
-        self.session.stash_request(task, rpc_id, "command",
-                                   {"preview": preview, "reason": reason, "cmd_type": "fileChange"})
-        await self.session.notify(notification)
-
-    async def _handle_permissions_approval(self, params: Any, rpc_id: Any) -> None:
-        task, task_id = self._approval_meta(params)
-        reason = (getattr(params, "reason", "") or "").strip() or "Codex permissions"
-
-        perms = getattr(params, "permissions", None)
-        fs = getattr(perms, "fileSystem", None) if perms else None
-        writes = getattr(fs, "write", None) if fs else None
-        net = getattr(perms, "network", None) if perms else None
-        parts = []
-        if writes:
-            parts.append("Write paths: " + ", ".join(f"`{getattr(p, 'root', p)}`" for p in writes))
-        if net and getattr(net, "enabled", False):
-            parts.append("Network access")
-        preview = "\n".join(parts) or "(no details)"
-
-        notification = "\n".join([
-            f"⚠️ Codex task `{task_id}` requests permissions:",
-            preview,
-            f"Reason: {reason}",
-            "",
-            self._approval_footer(task_id),
-        ])
-        self.session.stash_request(task, rpc_id, "command",
-                                   {"preview": preview, "reason": reason, "cmd_type": "permissions"})
-        await self.session.notify(notification)
-
     async def _handle_elicitation_request(self, params: Any, rpc_id: Any) -> None:
         inner = params.root if hasattr(params, "root") else params
-        task, task_id = self._approval_meta(inner)
+        task, task_id = self.approvals.approval_meta(inner)
         server_name = getattr(inner, "serverName", None) or "MCP server"
         elicitation = getattr(inner, "elicitation", None)
         mode = getattr(getattr(elicitation, "mode", None), "value", "form") if elicitation else "form"
@@ -188,7 +107,7 @@ class MessageHandler:
             url = getattr(elicitation, "url", "") or ""
             heading = f"🔗 `{task_id}` MCP `{server_name}` needs you to visit a link:"
             body = f"{url}\n{elicit_msg}"
-            footer = self._approval_footer(task_id, accept_label="When done", decline_label="Cancel")
+            footer = self.approvals.approval_footer(task_id, accept_label="When done", decline_label="Cancel")
         else:
             schema = getattr(elicitation, "requestedSchema", None) if elicitation else None
             schema_json = json.dumps(
@@ -197,7 +116,7 @@ class MessageHandler:
             )[:MAX_ELICITATION_SCHEMA_PREVIEW]
             heading = f"❓ `{task_id}` MCP `{server_name}` requests input:"
             body = f"{elicit_msg}\nSchema: `{schema_json}`"
-            footer = self._approval_footer(task_id, accept_label="Accept", decline_label="Decline")
+            footer = self.approvals.approval_footer(task_id, accept_label="Accept", decline_label="Decline")
 
         notification = "\n".join([heading, body, "", footer])
         self.session.stash_request(task, rpc_id, "elicitation",
@@ -377,7 +296,8 @@ class MessageHandler:
             await self.session.notify(f"⏱️ Codex task `{task.task_id}` interrupted")
         else:
             await self.session.notify(
-                f"✅ Codex task `{task.task_id}` completed\n"
+                f"✅ Codex task `{task.task_id}` turn completed "
+                f"(thread still alive — use reply to continue)\n"
                 f"Continue: `/codex reply {task.task_id} <message>`",
             )
 

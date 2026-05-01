@@ -6,7 +6,7 @@ import json
 import os
 from typing import Any
 
-from .codex_websocket_v2.policies import DEFAULT_APPROVAL_POLICY, DEFAULT_SANDBOX_POLICY
+from .codex_websocket_v2.policies import DEFAULT_APPROVAL_POLICY
 from .codex_websocket_v2.session_registry import resolve_current_session
 
 
@@ -18,7 +18,6 @@ def codex_task(args: dict, **kwargs: Any) -> str:
     cwd = args.get("cwd", "")
     prompt = args.get("prompt", "")
     approval_policy = args.get("approval_policy", DEFAULT_APPROVAL_POLICY)
-    sandbox_policy = args.get("sandbox_policy", DEFAULT_SANDBOX_POLICY)
     base_instructions = args.get("base_instructions")
 
     if not cwd or not os.path.isabs(cwd):
@@ -37,7 +36,6 @@ def codex_task(args: dict, **kwargs: Any) -> str:
         cwd=cwd,
         prompt=prompt.strip(),
         approval_policy=approval_policy,
-        sandbox_policy=sandbox_policy,
         base_instructions=base_instructions,
     )
     if not result["ok"]:
@@ -50,6 +48,7 @@ def codex_task(args: dict, **kwargs: Any) -> str:
         "task_id": task_id,
         "cwd": cwd,
         "model": result.get("model", session.get_default_model()),
+        "sandbox_policy": session.get_sandbox_policy(),
         "message": (
             f"Codex task {task_id} started in the background. "
             f"Progress, approval requests, and the final result will be "
@@ -243,6 +242,7 @@ def codex_session(args: dict, **kwargs: Any) -> str:
             "model": result["model"],
             "mode": result["mode"],
             "verbose": result["verbose"],  # "off" | "mid" | "on"
+            "sandbox_policy": result["sandbox_policy"],
         }, ensure_ascii=False)
 
     if action == "plan_get":
@@ -281,6 +281,24 @@ def codex_session(args: dict, **kwargs: Any) -> str:
             "verbose": result["verbose"],
         }, ensure_ascii=False)
 
+    if action == "sandbox_get":
+        return json.dumps({
+            "ok": True,
+            "sandbox_policy": session.get_sandbox_policy(),
+        }, ensure_ascii=False)
+
+    if action == "sandbox_set":
+        policy = (args.get("sandbox_policy") or "").strip()
+        if not policy:
+            return _error("sandbox_policy is required for sandbox_set")
+        result = session.set_sandbox_policy(policy)
+        if not result.get("ok"):
+            return _error(result.get("error", "unknown error"))
+        return json.dumps({
+            "ok": True,
+            "sandbox_policy": result["sandbox_policy"],
+        }, ensure_ascii=False)
+
     return _error(f"unknown action {action!r}")
 
 
@@ -289,7 +307,6 @@ def codex_revive(args: dict, **kwargs: Any) -> str:
     if not thread_id:
         return _error("thread_id is required")
 
-    sandbox_policy = args.get("sandbox_policy", DEFAULT_SANDBOX_POLICY)
     approval_policy = args.get("approval_policy", DEFAULT_APPROVAL_POLICY)
 
     try:
@@ -299,7 +316,6 @@ def codex_revive(args: dict, **kwargs: Any) -> str:
 
     result = session.revive_task(
         thread_id,
-        sandbox_policy=sandbox_policy,
         approval_policy=approval_policy,
     )
     if not result.get("ok"):

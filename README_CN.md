@@ -72,9 +72,10 @@ codex --version
 |---|---|---|
 | `cwd` | string（必填） | 项目目录的绝对路径 |
 | `prompt` | string（必填） | 任务描述 |
-| `approval_policy` | enum | `on-request` · `on-failure` · `never` · `untrusted`（默认 `never`） |
-| `sandbox_policy` | enum | `read-only` · `workspace-write` · `danger-full-access`（默认 `workspace-write`） |
+| `approval_policy` | enum | `on-request` · `on-failure` · `never` · `untrusted`（默认 `never`）— 仅控制 shell 命令执行审批，**不影响文件写入** |
 | `base_instructions` | string | 可选的前置指令 |
+
+> **文件写入权限**由 session 级 `sandbox_policy` 控制（通过 `codex_session sandbox_set` 或 `/codex sandbox` 设置）。`workspace-write`（默认）允许在 `cwd` 内自由写入；`read-only` 对每次写入触发 `fileChange` 审批。
 
 ### `codex_tasks`
 管理当前 session 的 task 和 thread。
@@ -97,7 +98,15 @@ codex --version
 列出或设置当前 session 的默认模型（`list` · `get_default` · `set_default`）。
 
 ### `codex_session`
-查看或切换 session 级状态（`status` · `plan_get/set` · `verbose_get/set`）。
+查看或切换 session 级状态（`status` · `plan_get/set` · `verbose_get/set` · `sandbox_get/set`）。
+
+`sandbox_set` 设置所有后续 task 的文件写入策略：
+
+| 值 | 行为 |
+|---|---|
+| `read-only` | 每次文件写入触发 `fileChange` 审批请求 |
+| `workspace-write` | Codex 在 `cwd` 内自由写入（默认） |
+| `danger-full-access` | 无限制 |
 
 ---
 
@@ -119,6 +128,7 @@ codex --version
 /codex models                                 — 列出可用模型
 /codex plan [on|off]                          — 切换 plan 协作模式
 /codex verbose [off|mid|on]                   — 设置通知详细程度
+/codex sandbox [read|write|full]              — 查看或设置 sandbox 策略
 /codex status                                 — 查看 session 状态
 /codex help [<subcommand>]
 ```

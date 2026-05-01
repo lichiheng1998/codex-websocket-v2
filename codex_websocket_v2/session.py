@@ -26,6 +26,7 @@ import threading
 from typing import Any, Dict, Optional
 
 from . import wire
+from .approval_handler import build_approval_response
 from .bridge import CodexBridge
 from .notify import notify_user, report_failure
 from .policies import (
@@ -61,6 +62,7 @@ class CodexSession:
         self.default_model: str = DEFAULT_MODEL
         self.mode: str = "default"          # "plan" | "default"
         self.verbose: str = "off"  # "off" | "mid" | "on"
+        self.sandbox_policy: str = DEFAULT_SANDBOX_POLICY
         self.tasks: Dict[str, Task] = {}    # task_id → Task
         self._provider: ProviderInfo = ProviderInfo()
 
@@ -156,19 +158,20 @@ class CodexSession:
         cwd: str,
         prompt: str,
         approval_policy: str = DEFAULT_APPROVAL_POLICY,
-        sandbox_policy: str = DEFAULT_SANDBOX_POLICY,
+        sandbox_policy: Optional[str] = None,
         base_instructions: Optional[str] = None,
     ) -> Result:
         started = self.ensure_started()
         if not started["ok"]:
             return started
 
+        resolved_sandbox = sandbox_policy if sandbox_policy is not None else self.sandbox_policy
         task_id = new_task_id()
 
         async def _boot() -> None:
             asyncio.create_task(self._drive_task(
                 task_id=task_id, cwd=cwd, prompt=prompt,
-                approval_policy=approval_policy, sandbox_policy=sandbox_policy,
+                approval_policy=approval_policy, sandbox_policy=resolved_sandbox,
                 base_instructions=base_instructions,
             ))
 
@@ -202,12 +205,14 @@ class CodexSession:
         self,
         thread_id: str,
         *,
-        sandbox_policy: str = DEFAULT_SANDBOX_POLICY,
+        sandbox_policy: Optional[str] = None,
         approval_policy: str = DEFAULT_APPROVAL_POLICY,
     ) -> Result:
         started = self.ensure_started()
         if not started["ok"]:
             return started
+
+        resolved_sandbox = sandbox_policy if sandbox_policy is not None else self.sandbox_policy
 
         # Already tracked in this session?
         for task in self.tasks.values():
@@ -245,7 +250,7 @@ class CodexSession:
         task_id = new_task_id()
         self.tasks[task_id] = Task(
             task_id=task_id, thread_id=thread_id, cwd=cwd,
-            sandbox_policy=sandbox_policy, approval_policy=approval_policy,
+            sandbox_policy=resolved_sandbox, approval_policy=approval_policy,
         )
         return ok(task_id=task_id, thread_id=thread_id, model=self.default_model)
 
@@ -350,8 +355,8 @@ class CodexSession:
     def approve_task(self, task_id: str, decision: str, *, for_session: bool = False) -> Result:
         """Resolve a pending command/elicitation request by sending a WS response.
 
-        Pass ``for_session=True`` with decision="accept" to send ``acceptForSession``
-        (only valid for command-execution approvals, not fileChange/permissions).
+        Pass ``for_session=True`` with decision="accept" to send the schema-specific
+        session-wide approval decision where the approval type supports it.
         """
         task = self.tasks.get(task_id)
         if task is None or task.request_rpc_id is None:
@@ -362,17 +367,11 @@ class CodexSession:
         if task.request_type == "elicitation":
             action = "accept" if decision == "accept" else "decline"
             payload = {"action": action, "content": None}
-        else:  # "command" — covers commandExecution / fileChange / permissions
-            cmd_type = (task.request_payload or {}).get("cmd_type", "exec")
-            if for_session and decision == "accept":
-                if cmd_type != "exec":
-                    return err(
-                        f"acceptForSession is only supported for command-execution approvals, "
-                        f"not {cmd_type!r}"
-                    )
-                payload = {"decision": "acceptForSession"}
-            else:
-                payload = {"decision": decision}
+        else:
+            built = build_approval_response(task.request_payload, decision, for_session=for_session)
+            if not built["ok"]:
+                return built
+            payload = built["payload"]
 
         rpc_id = task.request_rpc_id
         send = self.bridge.run_sync(
@@ -487,6 +486,16 @@ class CodexSession:
         self.mode = mode
         return ok(mode=mode)
 
+    def get_sandbox_policy(self) -> str:
+        return self.sandbox_policy
+
+    def set_sandbox_policy(self, policy: str) -> Result:
+        valid = ("read-only", "workspace-write", "danger-full-access")
+        if policy not in valid:
+            return err(f"unknown sandbox policy {policy!r}; use read-only / workspace-write / danger-full-access")
+        self.sandbox_policy = policy
+        return ok(sandbox_policy=policy)
+
     def get_verbose(self) -> str:
         return self.verbose
 
@@ -516,6 +525,7 @@ class CodexSession:
             model=self.default_model,
             mode=self.mode,
             verbose=self.verbose,
+            sandbox_policy=self.sandbox_policy,
         )
 
     # ── Drive functions (fire-and-forget) ────────────────────────────────────
