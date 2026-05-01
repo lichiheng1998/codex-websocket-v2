@@ -841,13 +841,12 @@ class CodexSession:
         model: str,
         plan: bool,
         sandbox_policy: str,
-        approval_policy: str,
     ) -> "wire.TurnStartParams":
         return wire.TurnStartParams(
             threadId=thread_id,
             input=[{"type": "text", "text": text}],
             model=model,
-            approvalPolicy=approval_policy,
+            approvalPolicy=wire.all_granular_approval_policy(),
             sandboxPolicy=prepare_sandbox(sandbox_policy, cwd),
             collaborationMode=(
                 plan_collaboration_mode(model)
@@ -904,7 +903,7 @@ class CodexSession:
             self._build_turn_start(
                 thread_id=thread_id, text=prompt, cwd=cwd,
                 model=model, plan=plan,
-                sandbox_policy=sandbox_policy, approval_policy=approval_policy,
+                sandbox_policy=sandbox_policy,
             ),
         )
         if not turn_rpc["ok"]:
@@ -924,7 +923,6 @@ class CodexSession:
                 model=self._task_model(task),
                 plan=self._task_plan(task),
                 sandbox_policy=self._task_sandbox_policy(task),
-                approval_policy=self._task_approval_policy(task),
             ),
         )
         if not rpc["ok"]:
