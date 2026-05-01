@@ -72,10 +72,13 @@ codex --version
 |---|---|---|
 | `cwd` | string（必填） | 项目目录的绝对路径 |
 | `prompt` | string（必填） | 任务描述 |
-| `approval_policy` | enum | `on-request` · `on-failure` · `never` · `untrusted`（默认 `never`）— 仅控制 shell 命令执行审批，**不影响文件写入** |
+| `model` | string | task 模型；不填则从 session default 拷贝 |
+| `plan` | enum | `on` · `off`；不填则从 session default 拷贝 |
+| `sandbox_policy` | enum | `read-only` · `workspace-write` · `danger-full-access`；不填则从 session default 拷贝 |
+| `approval_policy` | enum | `on-request` · `on-failure` · `never` · `untrusted`；不填则从 session default 拷贝 |
 | `base_instructions` | string | 可选的前置指令 |
 
-> **文件写入权限**由 session 级 `sandbox_policy` 控制（通过 `codex_session sandbox_set` 或 `/codex sandbox` 设置）。`workspace-write`（默认）允许在 `cwd` 内自由写入；`read-only` 对每次写入触发 `fileChange` 审批。
+Task 创建时会固定自己的 `model`、`plan`、`sandbox_policy`、`approval_policy`。后续 reply 使用 task 自己的值；修改 session default 只影响未来 task。
 
 ### `codex_tasks`
 管理当前 session 的 task 和 thread。
@@ -95,12 +98,12 @@ codex --version
 将上一个 session 的 thread（如 gateway 重启后丢失的）恢复到当前 session 的 task 表中。若 thread 当前被其他活跃 session 持有则拒绝。
 
 ### `codex_models`
-列出或设置当前 session 的默认模型（`list` · `get_default` · `set_default`）。
+列出共享模型，或查看/设置 default/task 模型（`list` · `get` · `set`）。`get`/`set` 不传 `task_id` 操作 session default，传 `task_id` 操作该 task；`list` 是所有 task 共享列表，行为保持不变。
 
 ### `codex_session`
-查看或切换 session 级状态（`status` · `plan_get/set` · `verbose_get/set` · `sandbox_get/set`）。
+查看或切换 session/task 状态（`status` · `plan_get/set` · `verbose_get/set` · `sandbox_get/set` · `approval_get/set`）。
 
-`sandbox_set` 设置所有后续 task 的文件写入策略：
+这些支持 task scope 的 action 不传 `task_id` 就操作 session default，传 `task_id` 就操作该 task。default `sandbox_set` 设置未来 task 会拷贝的文件写入策略：
 
 | 值 | 行为 |
 |---|---|
@@ -125,11 +128,16 @@ codex --version
 /codex archive --all                          — 归档当前 session 全部 task
 /codex archive --threads                      — 归档服务器全部 thread
 /codex model [<model_id>]                     — 查看或设置默认模型
+/codex model <task_id> [<model_id>]           — 查看或设置 task 模型
 /codex models                                 — 列出可用模型
-/codex plan [on|off]                          — 切换 plan 协作模式
+/codex plan [on|off]                          — 查看或设置默认 plan 模式
+/codex plan <task_id> [on|off]                — 查看或设置 task plan 模式
 /codex verbose [off|mid|on]                   — 设置通知详细程度
-/codex sandbox [read|write|full]              — 查看或设置 sandbox 策略
-/codex status                                 — 查看 session 状态
+/codex sandbox [read|write|full]              — 查看或设置默认 sandbox 策略
+/codex sandbox <task_id> [read|write|full]    — 查看或设置 task sandbox 策略
+/codex approval [policy]                      — 查看或设置默认 approval 策略
+/codex approval <task_id> [policy]            — 查看或设置 task approval 策略
+/codex status [task_id]                       — 查看 session 或 task 状态
 /codex help [<subcommand>]
 ```
 

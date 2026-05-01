@@ -14,9 +14,10 @@ CODEX_REVIVE = {
         "and Codex is idle waiting for the next prompt; the thread is still "
         "alive and tracked. Use codex_tasks reply to continue it instead. "
         "The session's sandbox_policy (set via codex_session sandbox_set or "
-        "/codex sandbox) is used automatically for revived threads. "
-        "Plan collaboration mode is a session-wide toggle — use "
-        "`/codex plan on|off` rather than passing it here."
+        "/codex sandbox) is used automatically for revived threads unless "
+        "sandbox_policy is passed. Model, plan, sandbox, and approval values "
+        "are copied onto the revived task; future replies use the task's "
+        "own values."
     ),
     "parameters": {
         "type": "object",
@@ -29,10 +30,23 @@ CODEX_REVIVE = {
                 "type": "string",
                 "enum": ["on-request", "on-failure", "never", "untrusted"],
                 "description": (
-                    f"Shell command execution prompting for follow-up turns "
-                    f"(default '{DEFAULT_APPROVAL_POLICY}'). Does NOT control "
-                    "file writes — use codex_session sandbox_set for that."
+                    "Optional task approval policy. If omitted, uses the "
+                    "session default approval policy."
                 ),
+            },
+            "sandbox_policy": {
+                "type": "string",
+                "enum": ["read-only", "workspace-write", "danger-full-access"],
+                "description": "Optional task sandbox policy. If omitted, uses the session default.",
+            },
+            "model": {
+                "type": "string",
+                "description": "Optional task model. If omitted, uses the session default model.",
+            },
+            "plan": {
+                "type": "string",
+                "enum": ["on", "off"],
+                "description": "Optional task plan mode. Only 'on' or 'off' are accepted.",
             },
         },
         "required": ["thread_id"],
@@ -112,11 +126,12 @@ CODEX_TASKS = {
 CODEX_MODELS = {
     "name": "codex_models",
     "description": (
-        "Inspect or set the default Codex model for this session. "
+        "List available Codex models, or inspect/set the default/task model. "
         "Action 'list' returns models advertised by the codex app-server "
-        "(annotated with which one is the current session default). "
-        "'get_default' returns the current session default. "
-        "'set_default' sets the session default (requires model_id). "
+        "(shared across tasks and annotated with the current session default). "
+        "'get' returns the session default model when task_id is omitted, or "
+        "the task model when task_id is provided. 'set' behaves the same and "
+        "requires model_id. "
         "Mirrors /codex models / /codex model [<id>]."
     ),
     "parameters": {
@@ -124,11 +139,15 @@ CODEX_MODELS = {
         "properties": {
             "action": {
                 "type": "string",
-                "enum": ["list", "get_default", "set_default"],
+                "enum": ["list", "get", "set"],
+            },
+            "task_id": {
+                "type": "string",
+                "description": "Optional for get/set. Omit to operate on the session default; pass a task_id to operate on that task.",
             },
             "model_id": {
                 "type": "string",
-                "description": "Required for set_default.",
+                "description": "Required for set.",
             },
         },
         "required": ["action"],
@@ -140,22 +159,22 @@ CODEX_SESSION = {
     "name": "codex_session",
     "description": (
         "Inspect or toggle session-level Codex state. "
-        "'status' returns a snapshot (connection, active_tasks, total_threads, "
-        "model, mode, verbose, sandbox_policy). "
-        "'plan_get'/'plan_set' read or set plan-mode "
-        "(when enabled, future turns use collaborationMode=plan). "
+        "'status' returns session status when task_id is omitted, or task "
+        "status when task_id is provided. "
+        "'plan_get'/'plan_set', 'sandbox_get'/'sandbox_set', and "
+        "'approval_get'/'approval_set' operate on the session default when "
+        "task_id is omitted, or on a task when task_id is provided. "
         "'verbose_get'/'verbose_set' read or set verbose level: "
         "'off' (last item/completed + turn/completed), "
         "'mid' (agentMessage + turn/completed), "
         "'on' (all item/completed notifications). "
-        "'sandbox_get'/'sandbox_set' read or set the session default sandbox "
-        "policy applied to all new and revived tasks. "
         "'read-only' = every file write triggers a fileChange approval; "
         "'workspace-write' = Codex writes freely inside cwd (no approval); "
         "'danger-full-access' = no restrictions. "
-        "'plan_set' requires enabled=true|false. 'verbose_set' requires level "
+        "'plan_set' requires plan='on'|'off'. 'verbose_set' requires level "
         "('off'/'mid'/'on'). 'sandbox_set' requires sandbox_policy. "
-        "Mirrors /codex status / plan / verbose / sandbox."
+        "'approval_set' requires approval_policy. "
+        "Mirrors /codex status / plan / verbose / sandbox / approval."
     ),
     "parameters": {
         "type": "object",
@@ -170,11 +189,18 @@ CODEX_SESSION = {
                     "verbose_set",
                     "sandbox_get",
                     "sandbox_set",
+                    "approval_get",
+                    "approval_set",
                 ],
             },
-            "enabled": {
-                "type": "boolean",
-                "description": "Required for plan_set.",
+            "task_id": {
+                "type": "string",
+                "description": "Optional for status and scoped get/set actions. Omit to operate on the session default/status.",
+            },
+            "plan": {
+                "type": "string",
+                "enum": ["on", "off"],
+                "description": "Required for plan_set. Only 'on' or 'off' are accepted.",
             },
             "level": {
                 "type": "string",
@@ -190,6 +216,11 @@ CODEX_SESSION = {
                     "approvals on every write; 'workspace-write' allows free "
                     "writes inside cwd; 'danger-full-access' removes all limits."
                 ),
+            },
+            "approval_policy": {
+                "type": "string",
+                "enum": ["on-request", "on-failure", "never", "untrusted"],
+                "description": "Required for approval_set. Omit task_id to set the session default; pass task_id to set a task.",
             },
         },
         "required": ["action"],
@@ -213,10 +244,9 @@ CODEX_TASK = {
         "(e.g. after a gateway restart). "
         "If Codex asks one or more questions (requestUserInput), answer with "
         "codex_tasks answer (not reply). "
-        "File write access is controlled by the session sandbox_policy "
-        "(default: workspace-write = Codex writes freely inside cwd; "
-        "read-only = every write triggers a fileChange approval). "
-        "Change it with codex_session sandbox_set or /codex sandbox. "
+        "Model, plan, sandbox_policy, and approval_policy are fixed on the "
+        "task when it is created. Omitted values are copied from the session "
+        "defaults; future replies use the task's own values. "
         "Use this when a task is well-scoped for a code-focused sub-agent "
         "(bug fix, feature, refactor). After calling, report the task_id to "
         "the user and return control — do NOT poll for the result."
@@ -236,12 +266,23 @@ CODEX_TASK = {
                 "type": "string",
                 "enum": ["on-request", "on-failure", "never", "untrusted"],
                 "description": (
-                    f"Controls shell command execution prompting only (default "
-                    f"'{DEFAULT_APPROVAL_POLICY}'). 'on-request' = every shell "
-                    "command triggers an approval request; 'never' = all "
-                    "commands run without prompting. Does NOT affect file "
-                    "writes — use codex_session sandbox_set for that."
+                    "Optional task approval policy. If omitted, uses the "
+                    f"session default (initially '{DEFAULT_APPROVAL_POLICY}')."
                 ),
+            },
+            "sandbox_policy": {
+                "type": "string",
+                "enum": ["read-only", "workspace-write", "danger-full-access"],
+                "description": "Optional task sandbox policy. If omitted, uses the session default.",
+            },
+            "model": {
+                "type": "string",
+                "description": "Optional task model. If omitted, uses the session default model.",
+            },
+            "plan": {
+                "type": "string",
+                "enum": ["on", "off"],
+                "description": "Optional task plan mode. Only 'on' or 'off' are accepted.",
             },
             "base_instructions": {
                 "type": "string",

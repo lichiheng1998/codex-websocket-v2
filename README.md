@@ -72,10 +72,13 @@ Start a new coding task in a background Codex thread. Returns immediately with a
 |---|---|---|
 | `cwd` | string (required) | Absolute path to the project directory |
 | `prompt` | string (required) | Task description / instructions for Codex |
-| `approval_policy` | enum | `on-request` · `on-failure` · `never` · `untrusted` (default: `never`) — shell command execution only; does **not** affect file writes |
+| `model` | string | Task model. If omitted, copied from the session default |
+| `plan` | enum | `on` · `off`. If omitted, copied from the session default |
+| `sandbox_policy` | enum | `read-only` · `workspace-write` · `danger-full-access`. If omitted, copied from the session default |
+| `approval_policy` | enum | `on-request` · `on-failure` · `never` · `untrusted`. If omitted, copied from the session default |
 | `base_instructions` | string | Optional instructions prepended to the thread |
 
-> **File write access** is controlled by the session-level `sandbox_policy` (set via `codex_session sandbox_set` or `/codex sandbox`). `workspace-write` (default) allows free writes inside `cwd`; `read-only` triggers a `fileChange` approval for every write.
+Task policy values are fixed when the task is created. Later replies use the task's own `model`, `plan`, `sandbox_policy`, and `approval_policy`; changing session defaults affects only future tasks.
 
 ### `codex_tasks`
 Manage tasks and threads in the current session.
@@ -95,12 +98,12 @@ Manage tasks and threads in the current session.
 Restore a thread from a previous session (e.g. after gateway restart) into the active task map. Blocked if the thread is currently held by another active session.
 
 ### `codex_models`
-List or set the default model for the current session (`list` · `get_default` · `set_default`).
+List shared models, or get/set the default/task model (`list` · `get` · `set`). For `get`/`set`, omit `task_id` to operate on the session default; pass `task_id` to operate on that task. `list` is shared across tasks and keeps the old behavior.
 
 ### `codex_session`
-Inspect or toggle session-level state (`status` · `plan_get/set` · `verbose_get/set` · `sandbox_get/set`).
+Inspect or toggle session/task state (`status` · `plan_get/set` · `verbose_get/set` · `sandbox_get/set` · `approval_get/set`).
 
-The `sandbox_set` action sets the default file write policy for all new and revived tasks:
+For scoped actions, omit `task_id` to operate on the session default; pass `task_id` to operate on that task. The default `sandbox_set` action sets the file write policy copied into future tasks:
 
 | Value | Behaviour |
 |---|---|
@@ -125,11 +128,16 @@ The `sandbox_set` action sets the default file write policy for all new and revi
 /codex archive --all                          — archive all tasks in this session
 /codex archive --threads                      — archive every thread on the server
 /codex model [<model_id>]                     — show or set default model
+/codex model <task_id> [<model_id>]           — show or set a task's model
 /codex models                                 — list available models
-/codex plan [on|off]                          — toggle plan collaboration mode
+/codex plan [on|off]                          — show or set default plan mode
+/codex plan <task_id> [on|off]                — show or set a task's plan mode
 /codex verbose [off|mid|on]                   — set notification verbosity
-/codex sandbox [read|write|full]              — show or set sandbox policy
-/codex status                                 — show session status
+/codex sandbox [read|write|full]              — show or set default sandbox policy
+/codex sandbox <task_id> [read|write|full]    — show or set a task's sandbox policy
+/codex approval [policy]                      — show or set default approval policy
+/codex approval <task_id> [policy]            — show or set a task's approval policy
+/codex status [task_id]                       — show session or task status
 /codex help [<subcommand>]
 ```
 

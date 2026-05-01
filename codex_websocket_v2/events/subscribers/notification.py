@@ -133,6 +133,7 @@ class NotificationSubscriber:
         task = event.task
         turn = event.turn
         status = event.status
+        task.last_turn_status = status
 
         if self.session.verbose == "off" and task.last_item is not None:
             await self._show_last_item(task)

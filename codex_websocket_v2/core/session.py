@@ -63,6 +63,7 @@ class CodexSession:
         self.mode: str = "default"          # "plan" | "default"
         self.verbose: str = "off"  # "off" | "mid" | "on"
         self.sandbox_policy: str = DEFAULT_SANDBOX_POLICY
+        self.approval_policy: str = DEFAULT_APPROVAL_POLICY
         self.tasks: Dict[str, Task] = {}    # task_id → Task
         self._provider: ProviderInfo = ProviderInfo()
         self.event_bus = EventBus()
@@ -161,7 +162,9 @@ class CodexSession:
         *,
         cwd: str,
         prompt: str,
-        approval_policy: str = DEFAULT_APPROVAL_POLICY,
+        model: Optional[str] = None,
+        plan: Any = None,
+        approval_policy: Optional[str] = None,
         sandbox_policy: Optional[str] = None,
         base_instructions: Optional[str] = None,
     ) -> Result:
@@ -169,20 +172,36 @@ class CodexSession:
         if not started["ok"]:
             return started
 
-        resolved_sandbox = sandbox_policy if sandbox_policy is not None else self.sandbox_policy
+        resolved = self._resolve_task_policy(
+            model=model,
+            plan=plan,
+            sandbox_policy=sandbox_policy,
+            approval_policy=approval_policy,
+        )
+        if not resolved["ok"]:
+            return resolved
         task_id = new_task_id()
 
         async def _boot() -> None:
             asyncio.create_task(self._drive_task(
                 task_id=task_id, cwd=cwd, prompt=prompt,
-                approval_policy=approval_policy, sandbox_policy=resolved_sandbox,
+                model=resolved["model"],
+                plan=resolved["plan"],
+                approval_policy=resolved["approval_policy"],
+                sandbox_policy=resolved["sandbox_policy"],
                 base_instructions=base_instructions,
             ))
 
         boot = self.bridge.run_sync(_boot(), timeout=SHORT_RPC_TIMEOUT)
         if not boot["ok"]:
             return boot
-        return ok(task_id=task_id, model=self.default_model)
+        return ok(
+            task_id=task_id,
+            model=resolved["model"],
+            plan=self._plan_label(resolved["plan"]),
+            sandbox_policy=resolved["sandbox_policy"],
+            approval_policy=resolved["approval_policy"],
+        )
 
     def send_reply(self, task_id: str, message: str) -> Result:
         started = self.ensure_started()
@@ -209,14 +228,23 @@ class CodexSession:
         self,
         thread_id: str,
         *,
+        model: Optional[str] = None,
+        plan: Any = None,
         sandbox_policy: Optional[str] = None,
-        approval_policy: str = DEFAULT_APPROVAL_POLICY,
+        approval_policy: Optional[str] = None,
     ) -> Result:
         started = self.ensure_started()
         if not started["ok"]:
             return started
 
-        resolved_sandbox = sandbox_policy if sandbox_policy is not None else self.sandbox_policy
+        resolved = self._resolve_task_policy(
+            model=model,
+            plan=plan,
+            sandbox_policy=sandbox_policy,
+            approval_policy=approval_policy,
+        )
+        if not resolved["ok"]:
+            return resolved
 
         # Already tracked in this session?
         for task in self.tasks.values():
@@ -248,7 +276,15 @@ class CodexSession:
         status = thread_obj.get("status") or {}
         if status.get("type") == "notLoaded":
             resumed = self.bridge.run_sync(
-                self.bridge.rpc("thread/resume", wire.ThreadResumeParams(threadId=thread_id), timeout=RPC_TIMEOUT),
+                self.bridge.rpc(
+                    "thread/resume",
+                    wire.ThreadResumeParams(
+                        threadId=thread_id,
+                        model=resolved["model"],
+                        approvalPolicy=resolved["approval_policy"],
+                    ),
+                    timeout=RPC_TIMEOUT,
+                ),
             )
             if not resumed["ok"]:
                 return err(f"thread/resume failed: {resumed['error']}")
@@ -256,9 +292,20 @@ class CodexSession:
         task_id = new_task_id()
         self.tasks[task_id] = Task(
             task_id=task_id, thread_id=thread_id, cwd=cwd,
-            sandbox_policy=resolved_sandbox, approval_policy=approval_policy,
+            model=resolved["model"],
+            plan=resolved["plan"],
+            sandbox_policy=resolved["sandbox_policy"],
+            approval_policy=resolved["approval_policy"],
+            thread_status=self._status_type(status),
         )
-        return ok(task_id=task_id, thread_id=thread_id, model=self.default_model)
+        return ok(
+            task_id=task_id,
+            thread_id=thread_id,
+            model=resolved["model"],
+            plan=self._plan_label(resolved["plan"]),
+            sandbox_policy=resolved["sandbox_policy"],
+            approval_policy=resolved["approval_policy"],
+        )
 
     def remove_task(self, task_id: str) -> Result:
         started = self.ensure_started()
@@ -303,7 +350,15 @@ class CodexSession:
     def list_tasks(self) -> Result:
         """List tasks in *this* session."""
         return ok(data=[
-            {"task_id": t.task_id, "thread_id": t.thread_id, "cwd": t.cwd}
+            {
+                "task_id": t.task_id,
+                "thread_id": t.thread_id,
+                "cwd": t.cwd,
+                "model": self._task_model(t),
+                "plan": self._plan_label(self._task_plan(t)),
+                "sandbox_policy": self._task_sandbox_policy(t),
+                "approval_policy": self._task_approval_policy(t),
+            }
             for t in self.tasks.values()
         ])
 
@@ -448,10 +503,40 @@ class CodexSession:
 
     # ── Settings ─────────────────────────────────────────────────────────────
 
-    def get_default_model(self) -> str:
-        return self.default_model
+    _VALID_APPROVAL_POLICIES = ("on-request", "on-failure", "never", "untrusted")
+    _VALID_SANDBOX_POLICIES = ("read-only", "workspace-write", "danger-full-access")
 
-    def set_default_model(self, model: str) -> Result:
+    @staticmethod
+    def _plan_label(plan: bool) -> str:
+        return "on" if plan else "off"
+
+    @staticmethod
+    def _status_type(status: Any) -> str:
+        if isinstance(status, dict):
+            return str(status.get("type") or "")
+        root = getattr(status, "root", status)
+        typ = getattr(root, "type", "")
+        return str(getattr(typ, "value", typ) or "")
+
+    def _task_or_error(self, task_id: Optional[str]) -> tuple[Optional[Task], Optional[Result]]:
+        if not task_id:
+            return None, None
+        task = self.tasks.get(task_id)
+        if task is None:
+            return None, err(f"unknown task id {task_id!r}")
+        return task, None
+
+    def _normalize_plan(self, plan: Any) -> Result:
+        if isinstance(plan, bool):
+            return ok(plan=plan)
+        normalized = (str(plan or "")).strip().lower()
+        if normalized in ("on", "true", "1", "enable", "enabled"):
+            return ok(plan=True)
+        if normalized in ("off", "false", "0", "disable", "disabled"):
+            return ok(plan=False)
+        return err(f"invalid plan {plan!r}; use on/off")
+
+    def _validate_model_id(self, model: str) -> Result:
         normalized = (model or "").strip()
         if not normalized:
             return err("model id is required")
@@ -470,8 +555,103 @@ class CodexSession:
                 listed.get("error"), normalized,
             )
 
-        self.default_model = normalized
         return ok(model=normalized)
+
+    def _validate_sandbox_policy(self, policy: str) -> Result:
+        if policy not in self._VALID_SANDBOX_POLICIES:
+            return err(
+                f"unknown sandbox policy {policy!r}; use read-only / "
+                "workspace-write / danger-full-access"
+            )
+        return ok(sandbox_policy=policy)
+
+    def _validate_approval_policy(self, policy: str) -> Result:
+        if policy not in self._VALID_APPROVAL_POLICIES:
+            return err(
+                f"unknown approval policy {policy!r}; use on-request / "
+                "on-failure / never / untrusted"
+            )
+        return ok(approval_policy=policy)
+
+    def _resolve_task_policy(
+        self,
+        *,
+        model: Optional[str],
+        plan: Any,
+        sandbox_policy: Optional[str],
+        approval_policy: Optional[str],
+    ) -> Result:
+        resolved_model = self.default_model if model is None else (model or "").strip()
+        if not resolved_model:
+            return err("model id is required")
+
+        if plan is None:
+            resolved_plan = self.mode == "plan"
+        else:
+            parsed_plan = self._normalize_plan(plan)
+            if not parsed_plan["ok"]:
+                return parsed_plan
+            resolved_plan = parsed_plan["plan"]
+
+        resolved_sandbox = sandbox_policy if sandbox_policy is not None else self.sandbox_policy
+        sandbox = self._validate_sandbox_policy(resolved_sandbox)
+        if not sandbox["ok"]:
+            return sandbox
+
+        resolved_approval = approval_policy if approval_policy is not None else self.approval_policy
+        approval = self._validate_approval_policy(resolved_approval)
+        if not approval["ok"]:
+            return approval
+
+        return ok(
+            model=resolved_model,
+            plan=resolved_plan,
+            sandbox_policy=resolved_sandbox,
+            approval_policy=resolved_approval,
+        )
+
+    def _task_model(self, task: Task) -> str:
+        return getattr(task, "model", None) or self.default_model
+
+    def _task_plan(self, task: Task) -> bool:
+        return bool(getattr(task, "plan", self.mode == "plan"))
+
+    def _task_sandbox_policy(self, task: Task) -> str:
+        return getattr(task, "sandbox_policy", None) or self.sandbox_policy
+
+    def _task_approval_policy(self, task: Task) -> str:
+        return getattr(task, "approval_policy", None) or self.approval_policy
+
+    def get_default_model(self) -> str:
+        return self.default_model
+
+    def set_default_model(self, model: str) -> Result:
+        validated = self._validate_model_id(model)
+        if not validated["ok"]:
+            return validated
+        self.default_model = validated["model"]
+        return ok(model=self.default_model)
+
+    def get_model(self, task_id: Optional[str] = None) -> Result:
+        task, error = self._task_or_error(task_id)
+        if error is not None:
+            return error
+        if task is not None:
+            return ok(scope="task", task_id=task_id, model=self._task_model(task))
+        return ok(scope="default", model=self.default_model)
+
+    def set_model(self, model: str, task_id: Optional[str] = None) -> Result:
+        task, error = self._task_or_error(task_id)
+        if error is not None:
+            return error
+        validated = self._validate_model_id(model)
+        if not validated["ok"]:
+            return validated
+        if task is not None:
+            task.model = validated["model"]
+            return ok(scope="task", task_id=task_id, model=task.model)
+        self.default_model = validated["model"]
+        return ok(scope="default", model=self.default_model)
 
     def list_models(
         self,
@@ -496,15 +676,74 @@ class CodexSession:
         self.mode = mode
         return ok(mode=mode)
 
-    def get_sandbox_policy(self) -> str:
+    def get_plan(self, task_id: Optional[str] = None) -> Result:
+        task, error = self._task_or_error(task_id)
+        if error is not None:
+            return error
+        if task is not None:
+            plan = self._task_plan(task)
+            return ok(scope="task", task_id=task_id, plan=self._plan_label(plan),
+                      mode="plan" if plan else "default")
+        plan = self.mode == "plan"
+        return ok(scope="default", plan=self._plan_label(plan), mode=self.mode)
+
+    def set_plan(self, plan: Any, task_id: Optional[str] = None) -> Result:
+        task, error = self._task_or_error(task_id)
+        if error is not None:
+            return error
+        parsed = self._normalize_plan(plan)
+        if not parsed["ok"]:
+            return parsed
+        if task is not None:
+            task.plan = parsed["plan"]
+            return ok(scope="task", task_id=task_id, plan=self._plan_label(task.plan),
+                      mode="plan" if task.plan else "default")
+        self.mode = "plan" if parsed["plan"] else "default"
+        return ok(scope="default", plan=self._plan_label(parsed["plan"]), mode=self.mode)
+
+    def get_sandbox_policy(self, task_id: Optional[str] = None) -> Any:
+        task, error = self._task_or_error(task_id)
+        if error is not None:
+            return error
+        if task is not None:
+            return ok(scope="task", task_id=task_id,
+                      sandbox_policy=self._task_sandbox_policy(task))
         return self.sandbox_policy
 
-    def set_sandbox_policy(self, policy: str) -> Result:
-        valid = ("read-only", "workspace-write", "danger-full-access")
-        if policy not in valid:
-            return err(f"unknown sandbox policy {policy!r}; use read-only / workspace-write / danger-full-access")
+    def set_sandbox_policy(self, policy: str, task_id: Optional[str] = None) -> Result:
+        task, error = self._task_or_error(task_id)
+        if error is not None:
+            return error
+        validated = self._validate_sandbox_policy(policy)
+        if not validated["ok"]:
+            return validated
+        if task is not None:
+            task.sandbox_policy = policy
+            return ok(scope="task", task_id=task_id, sandbox_policy=policy)
         self.sandbox_policy = policy
-        return ok(sandbox_policy=policy)
+        return ok(scope="default", sandbox_policy=policy)
+
+    def get_approval_policy(self, task_id: Optional[str] = None) -> Result:
+        task, error = self._task_or_error(task_id)
+        if error is not None:
+            return error
+        if task is not None:
+            return ok(scope="task", task_id=task_id,
+                      approval_policy=self._task_approval_policy(task))
+        return ok(scope="default", approval_policy=self.approval_policy)
+
+    def set_approval_policy(self, policy: str, task_id: Optional[str] = None) -> Result:
+        task, error = self._task_or_error(task_id)
+        if error is not None:
+            return error
+        validated = self._validate_approval_policy(policy)
+        if not validated["ok"]:
+            return validated
+        if task is not None:
+            task.approval_policy = policy
+            return ok(scope="task", task_id=task_id, approval_policy=policy)
+        self.approval_policy = policy
+        return ok(scope="default", approval_policy=policy)
 
     def get_verbose(self) -> str:
         return self.verbose
@@ -515,7 +754,10 @@ class CodexSession:
         self.verbose = level
         return ok(verbose=self.verbose)
 
-    def get_status(self) -> Result:
+    def get_status(self, task_id: Optional[str] = None) -> Result:
+        if task_id:
+            return self.get_task_status(task_id)
+
         connected = self.bridge.is_connected() if self.bridge else False
         active_tasks = len(self.tasks)
 
@@ -534,8 +776,58 @@ class CodexSession:
             total_threads=total_threads,
             model=self.default_model,
             mode=self.mode,
+            plan=self._plan_label(self.mode == "plan"),
             verbose=self.verbose,
             sandbox_policy=self.sandbox_policy,
+            approval_policy=self.approval_policy,
+        )
+
+    def get_task_status(self, task_id: str) -> Result:
+        task = self.tasks.get(task_id)
+        if task is None:
+            return err(f"unknown task id {task_id!r}")
+
+        warning = ""
+        thread_status = getattr(task, "thread_status", "") or ""
+        connected = self.bridge.is_connected() if self.bridge else False
+        if connected:
+            try:
+                read = self.bridge.run_sync(
+                    self.bridge.rpc(
+                        "thread/read",
+                        wire.ThreadReadParams(threadId=task.thread_id),
+                        timeout=RPC_TIMEOUT,
+                    ),
+                )
+                if read.get("ok"):
+                    thread = (read.get("result") or {}).get("thread") or {}
+                    thread_status = self._status_type(thread.get("status") or {})
+                    task.thread_status = thread_status
+                else:
+                    warning = read.get("error", "thread/read failed")
+            except Exception as exc:
+                warning = f"thread/read failed: {exc}"
+        else:
+            warning = "session is not connected; using cached task status"
+
+        pending = None
+        if task.request_rpc_id is not None:
+            pending = {"type": task.request_type}
+
+        return ok(
+            scope="task",
+            task_id=task.task_id,
+            thread_id=task.thread_id,
+            cwd=task.cwd,
+            model=self._task_model(task),
+            plan=self._plan_label(self._task_plan(task)),
+            mode="plan" if self._task_plan(task) else "default",
+            sandbox_policy=self._task_sandbox_policy(task),
+            approval_policy=self._task_approval_policy(task),
+            pending=pending,
+            thread_status=thread_status,
+            last_turn_status=getattr(task, "last_turn_status", "") or "",
+            warning=warning,
         )
 
     # ── Drive functions (fire-and-forget) ────────────────────────────────────
@@ -546,10 +838,11 @@ class CodexSession:
         thread_id: str,
         text: str,
         cwd: str,
+        model: str,
+        plan: bool,
         sandbox_policy: str,
         approval_policy: str,
     ) -> "wire.TurnStartParams":
-        model = self.default_model
         return wire.TurnStartParams(
             threadId=thread_id,
             input=[{"type": "text", "text": text}],
@@ -558,7 +851,7 @@ class CodexSession:
             sandboxPolicy=prepare_sandbox(sandbox_policy, cwd),
             collaborationMode=(
                 plan_collaboration_mode(model)
-                if self.mode == "plan"
+                if plan
                 else default_collaboration_mode(model)
             ),
         )
@@ -569,15 +862,20 @@ class CodexSession:
         task_id: str,
         cwd: str,
         prompt: str,
+        model: str,
+        plan: bool,
         approval_policy: str,
         sandbox_policy: str,
         base_instructions: Optional[str],
     ) -> None:
-        model = self.default_model
-
         thread_rpc = await self.bridge.rpc(
             "thread/start",
-            wire.ThreadStartParams(cwd=cwd, model=model, baseInstructions=base_instructions),
+            wire.ThreadStartParams(
+                cwd=cwd,
+                model=model,
+                approvalPolicy=approval_policy,
+                baseInstructions=base_instructions,
+            ),
         )
         if not thread_rpc["ok"]:
             await report_failure(self.target, task_id, "thread/start failed", thread_rpc["error"])
@@ -590,19 +888,22 @@ class CodexSession:
 
         self.tasks[task_id] = Task(
             task_id=task_id, thread_id=thread_id, cwd=cwd,
+            model=model,
+            plan=plan,
             sandbox_policy=sandbox_policy, approval_policy=approval_policy,
         )
 
         await self.notify(
             f"🤖 Codex task `{task_id}` started\n"
             f"cwd: `{cwd}`\nmodel: `{model}`"
-            + ("\nmode: `plan`" if self.mode == "plan" else "")
+            + ("\nplan: `on`" if plan else "")
         )
 
         turn_rpc = await self.bridge.rpc(
             "turn/start",
             self._build_turn_start(
                 thread_id=thread_id, text=prompt, cwd=cwd,
+                model=model, plan=plan,
                 sandbox_policy=sandbox_policy, approval_policy=approval_policy,
             ),
         )
@@ -620,7 +921,10 @@ class CodexSession:
             "turn/start",
             self._build_turn_start(
                 thread_id=task.thread_id, text=message, cwd=task.cwd,
-                sandbox_policy=task.sandbox_policy, approval_policy=task.approval_policy,
+                model=self._task_model(task),
+                plan=self._task_plan(task),
+                sandbox_policy=self._task_sandbox_policy(task),
+                approval_policy=self._task_approval_policy(task),
             ),
         )
         if not rpc["ok"]:

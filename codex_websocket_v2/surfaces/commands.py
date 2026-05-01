@@ -81,8 +81,8 @@ def _build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("models", add_help=True, help="list available models")
 
-    model_p = sub.add_parser("model", add_help=True, help="show or set default model")
-    model_p.add_argument("model_id", nargs="?", help="set or show default model")
+    model_p = sub.add_parser("model", add_help=True, help="show or set default/task model")
+    model_p.add_argument("args", nargs="*", help="[task_id] [model_id]")
 
     reply_p = sub.add_parser("reply", add_help=True, help="send follow-up to a task")
     reply_p.add_argument("task_id")
@@ -116,19 +116,23 @@ def _build_parser() -> argparse.ArgumentParser:
         help="archive every thread on the server",
     )
 
-    plan_p = sub.add_parser("plan", add_help=True, help="show or toggle plan mode")
-    plan_p.add_argument("toggle", nargs="?", help="'on' or 'off'; omit to query")
+    plan_p = sub.add_parser("plan", add_help=True, help="show or toggle default/task plan mode")
+    plan_p.add_argument("args", nargs="*", help="[task_id] [on|off]")
 
     verbose_p = sub.add_parser("verbose", add_help=True, help="show or set verbose level")
     verbose_p.add_argument("level", nargs="?", help="'off', 'mid', or 'on'; omit to query")
 
-    sandbox_p = sub.add_parser("sandbox", add_help=True, help="show or set sandbox policy")
+    sandbox_p = sub.add_parser("sandbox", add_help=True, help="show or set default/task sandbox policy")
     sandbox_p.add_argument(
-        "policy", nargs="?",
-        help="'read' (read-only), 'write' (workspace-write), 'full' (danger-full-access); omit to query",
+        "args", nargs="*",
+        help="[task_id] [read|write|full]",
     )
 
-    sub.add_parser("status", add_help=True, help="show session status")
+    approval_p = sub.add_parser("approval", add_help=True, help="show or set default/task approval policy")
+    approval_p.add_argument("args", nargs="*", help="[task_id] [on-request|on-failure|never|untrusted]")
+
+    status_p = sub.add_parser("status", add_help=True, help="show session or task status")
+    status_p.add_argument("task_id", nargs="?")
 
     help_p = sub.add_parser("help", add_help=True, help="show help")
     help_p.add_argument("topic", nargs="?", help="optional subcommand name")
@@ -167,6 +171,7 @@ def _cmd_help() -> str:
         "  `/codex models` — list available models from app-server\n"
         "  `/codex model` — show current default model (this session)\n"
         "  `/codex model <model_id>` — set default model for this session\n"
+        "  `/codex model <task_id> [model_id]` — show or set a task's model\n"
         "  `/codex reply <task_id> <message>` — send follow-up turn to Codex\n"
         "  `/codex answer <task_id> <answer>` — answer a Codex question\n"
         "  `/codex answer <task_id> <a1> | <a2> | <a3>` — answer multiple questions (separate with ' | ')\n"
@@ -176,11 +181,14 @@ def _cmd_help() -> str:
         "  `/codex archive <task_id>` — archive a specific task\n"
         "  `/codex archive --all` — archive all tasks in this session\n"
         "  `/codex archive --threads` — archive every thread on the server\n"
-        "  `/codex plan on|off` — toggle plan mode (this session)\n"
+        "  `/codex plan [on|off]` — show or set default plan mode\n"
+        "  `/codex plan <task_id> [on|off]` — show or set a task's plan mode\n"
         "  `/codex verbose off|mid|on` — set verbosity (off = last item + turn end; mid = agentMessage + turn end; on = all)\n"
-        "  `/codex sandbox` — show current sandbox policy\n"
-        "  `/codex sandbox read|write|full` — set sandbox policy (read-only / workspace-write / danger-full-access)\n"
-        "  `/codex status` — show session status"
+        "  `/codex sandbox [read|write|full]` — show or set default sandbox policy\n"
+        "  `/codex sandbox <task_id> [read|write|full]` — show or set a task's sandbox policy\n"
+        "  `/codex approval [on-request|on-failure|never|untrusted]` — show or set default approval policy\n"
+        "  `/codex approval <task_id> [on-request|on-failure|never|untrusted]` — show or set a task's approval policy\n"
+        "  `/codex status [task_id]` — show session or task status"
     )
 
 
@@ -270,17 +278,54 @@ def _cmd_models() -> str:
     return "\n".join(lines)
 
 
-def _cmd_model(model_id: Optional[str]) -> str:
+def _known_task_ids() -> set[str]:
+    result = _call("codex_tasks", {"action": "list", "show_threads": False})
+    if not result.get("ok"):
+        return set()
+    return {
+        str(task.get("task_id"))
+        for task in result.get("tasks") or []
+        if task.get("task_id")
+    }
+
+
+def _split_scope_args(args: list[str], value_words: set[str] | None = None) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    if not args:
+        return None, None, None
+    if len(args) > 2:
+        return None, None, "too_many"
+    task_ids = _known_task_ids()
+    first = args[0]
+    if len(args) == 2:
+        return first, args[1], None
+    if first in task_ids:
+        return first, None, None
+    if value_words is not None and first not in value_words:
+        return first, None, None
+    return None, first, None
+
+
+def _scope_suffix(result: dict) -> str:
+    if result.get("scope") == "task":
+        return f"task `{result.get('task_id')}`"
+    return "default"
+
+
+def _cmd_model(args: list[str]) -> str:
+    task_id, model_id, error = _split_scope_args(args)
+    if error:
+        return "Usage: `/codex model [model_id]` or `/codex model <task_id> [model_id]`"
+
     if not model_id:
-        result = _call("codex_models", {"action": "get_default"})
+        result = _call("codex_models", {"action": "get", "task_id": task_id})
         if not result.get("ok"):
             return f"Failed: {result.get('error', 'unknown error')}"
-        return f"Default model is `{result.get('model', '')}`."
+        return f"Model for {_scope_suffix(result)} is `{result.get('model', '')}`."
 
-    result = _call("codex_models", {"action": "set_default", "model_id": model_id})
+    result = _call("codex_models", {"action": "set", "task_id": task_id, "model_id": model_id})
     if not result.get("ok"):
         return f"Failed: {result.get('error', 'unknown error')}"
-    return f"Default model set to `{result['model']}`."
+    return f"Model for {_scope_suffix(result)} set to `{result['model']}`."
 
 
 def _cmd_approve(task_id: str, for_session: bool = False) -> str:
@@ -331,26 +376,39 @@ def _cmd_archive(ns: argparse.Namespace) -> str:
     return f"Failed: {result.get('error', 'unknown error')}"
 
 
-def _cmd_plan(toggle: Optional[str]) -> str:
+_PLAN_ALIASES = {
+    "on": "on",
+    "true": "on",
+    "1": "on",
+    "enable": "on",
+    "enabled": "on",
+    "off": "off",
+    "false": "off",
+    "0": "off",
+    "disable": "off",
+    "disabled": "off",
+}
+
+
+def _cmd_plan(args: list[str]) -> str:
+    task_id, toggle, error = _split_scope_args(args, set(_PLAN_ALIASES))
+    if error:
+        return "Usage: `/codex plan [on|off]` or `/codex plan <task_id> [on|off]`"
+
     if toggle is None:
-        result = _call("codex_session", {"action": "plan_get"})
+        result = _call("codex_session", {"action": "plan_get", "task_id": task_id})
         if not result.get("ok"):
             return f"Failed: {result.get('error', 'unknown error')}"
-        return f"Plan mode is `{result.get('mode', '')}`."
+        return f"Plan mode for {_scope_suffix(result)} is `{result.get('plan', '')}`."
     normalized = toggle.strip().lower()
-    if normalized in ("on", "true", "1", "enable", "enabled"):
-        enabled = True
-    elif normalized in ("off", "false", "0", "disable", "disabled"):
-        enabled = False
-    else:
-        return f"Unknown toggle `{toggle}`. Use `/codex plan on` or `/codex plan off`."
+    plan = _PLAN_ALIASES.get(normalized)
+    if plan is None:
+        return f"Unknown toggle `{toggle}`. Use `on` or `off`."
 
-    result = _call("codex_session", {"action": "plan_set", "enabled": enabled})
+    result = _call("codex_session", {"action": "plan_set", "task_id": task_id, "plan": plan})
     if not result.get("ok"):
         return f"Failed: {result.get('error', 'unknown error')}"
-    if enabled:
-        return "Plan mode `on` — future turns will use collaborationMode=plan."
-    return "Plan mode `off` — future turns will use collaborationMode=default."
+    return f"Plan mode for {_scope_suffix(result)} set to `{result.get('plan', '')}`."
 
 
 def _cmd_verbose(level: Optional[str]) -> str:
@@ -426,16 +484,24 @@ _SANDBOX_ALIASES = {
 }
 
 
-def _cmd_sandbox(policy: Optional[str]) -> str:
+def _cmd_sandbox(args: list[str]) -> str:
+    task_id, policy, error = _split_scope_args(args, set(_SANDBOX_ALIASES))
+    if error:
+        return "Usage: `/codex sandbox [read|write|full]` or `/codex sandbox <task_id> [read|write|full]`"
+
     if policy is None:
-        result = _call("codex_session", {"action": "sandbox_get"})
+        result = _call("codex_session", {"action": "sandbox_get", "task_id": task_id})
         if not result.get("ok"):
             return f"Failed: {result.get('error', 'unknown error')}"
-        return f"Sandbox policy is `{result.get('sandbox_policy', '')}`. Options: read / write / full"
+        return f"Sandbox policy for {_scope_suffix(result)} is `{result.get('sandbox_policy', '')}`. Options: read / write / full"
     normalized = _SANDBOX_ALIASES.get(policy.strip().lower())
     if normalized is None:
         return f"Unknown policy `{policy}`. Use: `/codex sandbox read|write|full`"
-    result = _call("codex_session", {"action": "sandbox_set", "sandbox_policy": normalized})
+    result = _call("codex_session", {
+        "action": "sandbox_set",
+        "task_id": task_id,
+        "sandbox_policy": normalized,
+    })
     if not result.get("ok"):
         return f"Failed: {result.get('error', 'unknown error')}"
     descriptions = {
@@ -443,13 +509,59 @@ def _cmd_sandbox(policy: Optional[str]) -> str:
         "workspace-write": "Codex writes freely inside cwd",
         "danger-full-access": "no restrictions",
     }
-    return f"Sandbox policy set to `{normalized}` — {descriptions[normalized]}."
+    return f"Sandbox policy for {_scope_suffix(result)} set to `{normalized}` — {descriptions[normalized]}."
 
 
-def _cmd_status() -> str:
-    result = _call("codex_session", {"action": "status"})
+_APPROVAL_POLICIES = {"on-request", "on-failure", "never", "untrusted"}
+
+
+def _cmd_approval(args: list[str]) -> str:
+    task_id, policy, error = _split_scope_args(args, _APPROVAL_POLICIES)
+    if error:
+        return "Usage: `/codex approval [on-request|on-failure|never|untrusted]` or `/codex approval <task_id> [policy]`"
+
+    if policy is None:
+        result = _call("codex_session", {"action": "approval_get", "task_id": task_id})
+        if not result.get("ok"):
+            return f"Failed: {result.get('error', 'unknown error')}"
+        return f"Approval policy for {_scope_suffix(result)} is `{result.get('approval_policy', '')}`."
+    if policy not in _APPROVAL_POLICIES:
+        return f"Unknown approval policy `{policy}`. Use: on-request / on-failure / never / untrusted"
+    result = _call("codex_session", {
+        "action": "approval_set",
+        "task_id": task_id,
+        "approval_policy": policy,
+    })
+    if not result.get("ok"):
+        return f"Failed: {result.get('error', 'unknown error')}"
+    return f"Approval policy for {_scope_suffix(result)} set to `{result.get('approval_policy', '')}`."
+
+
+def _cmd_status(task_id: Optional[str] = None) -> str:
+    result = _call("codex_session", {"action": "status", "task_id": task_id})
     if not result.get("ok"):
         return f"Failed to get status: {result.get('error', 'unknown error')}"
+
+    if task_id:
+        pending = result.get("pending")
+        pending_text = pending.get("type") if pending else "none"
+        warning = result.get("warning") or ""
+        text = (
+            "**Codex Task Status**\n"
+            f"• Task id: `{result['task_id']}`\n"
+            f"• Thread id: `{result['thread_id']}`\n"
+            f"• Cwd: `{result.get('cwd', '')}`\n"
+            f"• Model: `{result.get('model', '')}`\n"
+            f"• Plan: `{result.get('plan', '')}`\n"
+            f"• Sandbox: `{result.get('sandbox_policy', '')}`\n"
+            f"• Approval: `{result.get('approval_policy', '')}`\n"
+            f"• Pending: `{pending_text}`\n"
+            f"• Thread status: `{result.get('thread_status', '')}`\n"
+            f"• Last turn: `{result.get('last_turn_status', '')}`"
+        )
+        if warning:
+            text += f"\n• Warning: {warning}"
+        return text
 
     conn = "connected" if result["connected"] else "disconnected"
     return (
@@ -459,9 +571,10 @@ def _cmd_status() -> str:
         f"• Active tasks: {result['active_tasks']}\n"
         f"• Total threads: {result['total_threads']}\n"
         f"• Default model: `{result['model']}`\n"
-        f"• Mode: `{result['mode']}`\n"
+        f"• Default plan: `{result.get('plan', result['mode'])}`\n"
         f"• Verbose: `{result['verbose']}`\n"
-        f"• Sandbox: `{result.get('sandbox_policy', 'workspace-write')}`"
+        f"• Default sandbox: `{result.get('sandbox_policy', 'workspace-write')}`\n"
+        f"• Default approval: `{result.get('approval_policy', '')}`"
     )
 
 
@@ -489,7 +602,7 @@ def handle_slash(raw_args: str) -> str:
         return _cmd_models()
 
     if ns.command == "model":
-        return _cmd_model(ns.model_id)
+        return _cmd_model(ns.args)
 
     if ns.command == "approve":
         return _cmd_approve(ns.task_id, for_session=getattr(ns, "for_session", False))
@@ -501,16 +614,19 @@ def handle_slash(raw_args: str) -> str:
         return _cmd_archive(ns)
 
     if ns.command == "plan":
-        return _cmd_plan(ns.toggle)
+        return _cmd_plan(ns.args)
 
     if ns.command == "verbose":
         return _cmd_verbose(ns.level)
 
     if ns.command == "sandbox":
-        return _cmd_sandbox(ns.policy)
+        return _cmd_sandbox(ns.args)
+
+    if ns.command == "approval":
+        return _cmd_approval(ns.args)
 
     if ns.command == "status":
-        return _cmd_status()
+        return _cmd_status(ns.task_id)
 
     if ns.command == "reply":
         return _cmd_reply(ns)

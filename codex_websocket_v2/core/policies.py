@@ -22,7 +22,7 @@ from ..transport import wire
 # ── Default policies ────────────────────────────────────────────────────────
 
 DEFAULT_MODEL = "gpt-5"
-DEFAULT_APPROVAL_POLICY = "never"
+DEFAULT_APPROVAL_POLICY = "on-request"
 DEFAULT_SANDBOX_POLICY = "workspace-write"
 
 

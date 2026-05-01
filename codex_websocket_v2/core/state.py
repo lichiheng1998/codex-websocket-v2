@@ -43,8 +43,12 @@ class Task:
     task_id: str
     thread_id: str
     cwd: str
+    model: str
+    plan: bool
     sandbox_policy: str
     approval_policy: str
+    thread_status: str = ""
+    last_turn_status: str = ""
 
     # The single in-flight server→client request, if any.
     # request_type: "command" | "elicitation" | "input"
