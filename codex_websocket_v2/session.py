@@ -28,6 +28,7 @@ from typing import Any, Dict, Optional
 from . import wire
 from .approval_handler import build_approval_response
 from .bridge import CodexBridge
+from .event_bus import EventBus
 from .notify import notify_user, report_failure
 from .policies import (
     DEFAULT_APPROVAL_POLICY,
@@ -48,6 +49,7 @@ from .provider import (
 )
 from .server_manager import CodexServerManager
 from .state import Result, Task, TaskTarget, err, ok
+from .subscribers import register_default_subscribers
 from .utils import extract_thread_id, new_task_id
 from . import session_registry as _registry
 
@@ -65,6 +67,8 @@ class CodexSession:
         self.sandbox_policy: str = DEFAULT_SANDBOX_POLICY
         self.tasks: Dict[str, Task] = {}    # task_id → Task
         self._provider: ProviderInfo = ProviderInfo()
+        self.event_bus = EventBus()
+        register_default_subscribers(self.event_bus, self)
 
         self._server = CodexServerManager.instance()
         self.bridge: Optional[CodexBridge] = None
