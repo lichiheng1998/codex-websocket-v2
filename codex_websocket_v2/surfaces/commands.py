@@ -107,6 +107,11 @@ def _build_parser() -> argparse.ArgumentParser:
     deny_p = sub.add_parser("deny", add_help=True, help="deny a pending request")
     deny_p.add_argument("task_id")
 
+    respond_p = sub.add_parser("respond", add_help=True, help="respond to a pending elicitation with schema data")
+    respond_p.add_argument("task_id")
+    respond_p.add_argument("content_json", nargs="?", default=None,
+                           help="JSON object matching the elicitation schema (omit to accept without data)")
+
     archive_p = sub.add_parser("archive", add_help=True, help="archive tasks or threads")
     archive_p.add_argument("task_id", nargs="?", help="task_id to archive")
     archive_p.add_argument(
@@ -181,6 +186,7 @@ def _cmd_help() -> str:
         "  `/codex approve <task_id>` — approve a pending Codex request\n"
         "  `/codex approve --all <task_id>` — approve and stop prompting for similar commands this session\n"
         "  `/codex deny <task_id>` — deny a pending Codex request\n"
+        "  `/codex respond <task_id> [json]` — respond to an elicitation with schema data\n"
         "  `/codex archive <task_id>` — archive a specific task\n"
         "  `/codex archive --all` — archive all tasks in this session\n"
         "  `/codex archive --threads` — archive every thread on the server\n"
@@ -344,6 +350,20 @@ def _cmd_deny(task_id: str) -> str:
     result = _call("codex_tasks", {"action": "deny", "task_id": task_id})
     if result.get("ok"):
         return f"Denied task `{task_id}`."
+    return f"Failed: {result.get('error', 'unknown error')}"
+
+
+def _cmd_respond(task_id: str, content_json: str | None) -> str:
+    import json as _json
+    content = None
+    if content_json:
+        try:
+            content = _json.loads(content_json)
+        except _json.JSONDecodeError as exc:
+            return f"Invalid JSON: {exc}"
+    result = _call("codex_tasks", {"action": "respond", "task_id": task_id, "content": content})
+    if result.get("ok"):
+        return f"Responded to elicitation for task `{task_id}`."
     return f"Failed: {result.get('error', 'unknown error')}"
 
 
@@ -653,6 +673,9 @@ def handle_slash(raw_args: str) -> str:
 
     if ns.command == "deny":
         return _cmd_deny(ns.task_id)
+
+    if ns.command == "respond":
+        return _cmd_respond(ns.task_id, getattr(ns, "content_json", None))
 
     if ns.command == "archive":
         return _cmd_archive(ns)

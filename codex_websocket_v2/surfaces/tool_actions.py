@@ -64,6 +64,8 @@ def _serialize_task(session, task) -> dict:
     pending = None
     if task.request_rpc_id is not None:
         pending = {"type": task.request_type}
+        if task.request_type == "elicitation" and task.request_schema:
+            pending["schema"] = task.request_schema
     return {
         "task_id": task.task_id,
         "thread_id": task.thread_id,
@@ -182,6 +184,19 @@ def _tasks_deny(session, args: dict) -> str:
     return ok(task_id=task_id, decision="decline")
 
 
+def _tasks_respond(session, args: dict) -> str:
+    task_id, result_error = require_str(
+        args, "task_id", message="task_id is required for respond"
+    )
+    if result_error is not None:
+        return result_error
+    content = args.get("content")  # dict or None
+    result = session.respond_task(task_id, content)
+    if result_error := tool_error_from_result(result):
+        return result_error
+    return ok(task_id=task_id, decision="respond")
+
+
 def _tasks_archive(session, args: dict) -> str:
     target, result_error = require_str(
         args, "target", message="target is required for archive"
@@ -263,6 +278,7 @@ CODEX_TASK_ACTIONS: dict[str, ActionHandler] = {
     "answer": _tasks_answer,
     "approve": _tasks_approve,
     "deny": _tasks_deny,
+    "respond": _tasks_respond,
     "archive": _tasks_archive,
 }
 

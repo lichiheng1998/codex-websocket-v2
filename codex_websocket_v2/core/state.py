@@ -55,6 +55,7 @@ class Task:
     request_rpc_id: Any = None
     request_type: Optional[str] = None
     request_payload: Optional[Dict[str, Any]] = field(default=None)
+    request_schema: Optional[Dict[str, Any]] = field(default=None)  # elicitation requestedSchema
 
     # Buffer for "off" verbose level — holds the most recent item, flushed at turn/completed.
     last_item: Any = None

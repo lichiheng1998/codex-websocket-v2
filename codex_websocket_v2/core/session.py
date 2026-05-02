@@ -138,6 +138,8 @@ class CodexSession:
         rpc_id: Any,
         request_type: str,
         payload: Dict[str, Any],
+        *,
+        request_schema: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Record a pending server→client request on the task.
 
@@ -150,6 +152,7 @@ class CodexSession:
         task.request_rpc_id = rpc_id
         task.request_type = request_type
         task.request_payload = payload
+        task.request_schema = request_schema
 
     async def notify(self, text: str) -> None:
         """Push a message to this session's chat target."""
@@ -414,21 +417,23 @@ class CodexSession:
     # ── Approval / Input resolution ──────────────────────────────────────────
 
     def approve_task(self, task_id: str, decision: str, *, for_session: bool = False) -> Result:
-        """Resolve a pending command/elicitation request by sending a WS response.
+        """Resolve a pending command approval or simple elicitation response.
 
         Pass ``for_session=True`` with decision="accept" to send the schema-specific
         session-wide approval decision where the approval type supports it.
+        For elicitation requests, approve/deny is a shorthand for accepting or
+        declining with empty form content. Use ``respond_task`` to send fields.
         """
         task = self.tasks.get(task_id)
         if task is None or task.request_rpc_id is None:
             return err(f"no pending request for task `{task_id}`")
-        if task.request_type not in ("command", "elicitation"):
-            return err(f"task `{task_id}` has a {task.request_type!r} request, not approvable")
-
         if task.request_type == "elicitation":
             action = "accept" if decision == "accept" else "decline"
-            payload = {"action": action, "content": None}
+            payload = {"action": action, "content": {}}
         else:
+            if task.request_type not in ("command",):
+                return err(f"task `{task_id}` has a {task.request_type!r} request, not approvable")
+
             built = build_approval_response(task.request_payload, decision, for_session=for_session)
             if not built["ok"]:
                 return built
@@ -447,7 +452,65 @@ class CodexSession:
         task.request_rpc_id = None
         task.request_type = None
         task.request_payload = None
+        task.request_schema = None
         return ok(decision=decision)
+
+    def respond_task(self, task_id: str, content: "dict | None" = None) -> Result:
+        """Resolve a pending elicitation request by sending schema data.
+
+        ``content`` is the form data matching ``task.request_schema``.
+        Pass ``None`` or an empty dict to accept without data (equivalent to
+        the old approve-with-null-content path).
+        """
+        task = self.tasks.get(task_id)
+        if task is None or task.request_rpc_id is None:
+            return err(f"no pending request for task `{task_id}`")
+        if task.request_type != "elicitation":
+            return err(f"task `{task_id}` has a {task.request_type!r} request, not an elicitation")
+
+        payload = {"action": "accept", "content": content}
+
+        rpc_id = task.request_rpc_id
+        send = self.bridge.run_sync(
+            self.bridge.ws_send(json.dumps({
+                "jsonrpc": "2.0", "id": rpc_id, "result": payload,
+            })),
+            timeout=SHORT_RPC_TIMEOUT,
+        )
+        if not send["ok"]:
+            return send
+
+        task.request_rpc_id = None
+        task.request_type = None
+        task.request_payload = None
+        task.request_schema = None
+        return ok(task_id=task_id, decision="respond")
+
+    def decline_task(self, task_id: str) -> Result:
+        """Decline a pending elicitation request."""
+        task = self.tasks.get(task_id)
+        if task is None or task.request_rpc_id is None:
+            return err(f"no pending request for task `{task_id}`")
+        if task.request_type != "elicitation":
+            return err(f"task `{task_id}` has a {task.request_type!r} request, not an elicitation")
+
+        payload = {"action": "decline", "content": {}}
+
+        rpc_id = task.request_rpc_id
+        send = self.bridge.run_sync(
+            self.bridge.ws_send(json.dumps({
+                "jsonrpc": "2.0", "id": rpc_id, "result": payload,
+            })),
+            timeout=SHORT_RPC_TIMEOUT,
+        )
+        if not send["ok"]:
+            return send
+
+        task.request_rpc_id = None
+        task.request_type = None
+        task.request_payload = None
+        task.request_schema = None
+        return ok(task_id=task_id, decision="decline")
 
     def input_task(
         self,

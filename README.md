@@ -88,8 +88,9 @@ Manage tasks and threads in the current session.
 | `list` | `show_threads` | List session tasks (or all server threads) |
 | `reply` | `task_id`, `message` | Send a follow-up turn message to a running task |
 | `answer` | `task_id`, `responses[]` or `answers[][]` | Answer a `requestUserInput`; use `answers[][]` for multiple answers per question |
-| `approve` | `task_id`, `for_session` | Approve a pending command / elicitation. Set `for_session=true` to send `acceptForSession` (command-execution only: stops Codex prompting for similar commands this session) |
-| `deny` | `task_id` | Deny a pending command / elicitation |
+| `approve` | `task_id`, `for_session` | Approve a pending command, or accept a pending elicitation with empty content `{}`. Set `for_session=true` to send `acceptForSession` for command approvals only |
+| `deny` | `task_id` | Deny a pending command, or decline a pending elicitation with empty content `{}` |
+| `respond` | `task_id`, `content` | Respond to a pending elicitation with form data matching its schema |
 | `archive` | `target` | Archive a specific task (`task_id`), all session tasks (`all`), or every server thread (`allthreads`). Blocked if the thread is held by another active session. |
 
 For `requestUserInput` questions with options, answer with the exact option label shown in the notification.

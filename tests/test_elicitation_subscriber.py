@@ -1,0 +1,191 @@
+from __future__ import annotations
+
+import asyncio
+import json
+from types import SimpleNamespace
+
+from codex_websocket_v2.core.session import CodexSession
+from codex_websocket_v2.core.state import Task, TaskTarget
+from codex_websocket_v2.events.factory import EventFactory
+from codex_websocket_v2.events.subscribers.elicitation import ElicitationSubscriber
+from codex_websocket_v2.surfaces.tool_actions import dispatch_task_action
+
+
+class FakeBridge:
+    def __init__(self) -> None:
+        self.sent: list[str] = []
+
+    async def ws_send(self, message: str) -> None:
+        self.sent.append(message)
+
+    def run_sync(self, awaitable, timeout=None):
+        try:
+            awaitable.send(None)
+        except StopIteration:
+            return {"ok": True}
+        return {"ok": False, "error": "awaitable did not finish synchronously"}
+
+
+class FakeSession:
+    def __init__(self) -> None:
+        self.task = SimpleNamespace(
+            thread_id="thread-1",
+            task_id="task-1",
+            request_rpc_id=None,
+            request_type=None,
+            request_payload=None,
+            request_schema=None,
+        )
+        self.notifications: list[str] = []
+
+    def task_for_thread(self, thread_id: str):
+        return self.task if thread_id == self.task.thread_id else None
+
+    def stash_request(self, task, rpc_id, request_type, payload, *, request_schema=None) -> None:
+        task.request_rpc_id = rpc_id
+        task.request_type = request_type
+        task.request_payload = payload
+        task.request_schema = request_schema
+
+    async def notify(self, text: str) -> None:
+        self.notifications.append(text)
+
+
+def test_elicitation_subscriber_stashes_flat_requested_schema() -> None:
+    raw = {
+        "jsonrpc": "2.0",
+        "id": 7,
+        "method": "mcpServer/elicitation/request",
+        "params": {
+            "serverName": "elicitation_demo",
+            "threadId": "thread-1",
+            "turnId": "turn-1",
+            "message": "Need trip details",
+            "mode": "form",
+            "requestedSchema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                    "city": {"type": "string", "title": "Destination city"},
+                    "days": {"type": "integer", "title": "Trip length"},
+                    "includeFood": {
+                        "type": "boolean",
+                        "title": "Include food suggestions",
+                    },
+                },
+                "required": ["city", "days"],
+            },
+        },
+    }
+    session = FakeSession()
+    event = EventFactory(session).from_raw(raw)
+
+    asyncio.run(ElicitationSubscriber(session)(event))
+
+    assert session.task.request_schema == {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+            "city": {"title": "Destination city", "type": "string"},
+            "days": {"title": "Trip length", "type": "integer"},
+            "includeFood": {"title": "Include food suggestions", "type": "boolean"},
+        },
+        "required": ["city", "days"],
+        "type": "object",
+    }
+    assert '"city"' in session.notifications[0]
+    assert "/codex approve task-1" in session.notifications[0]
+    assert "/codex respond task-1" in session.notifications[0]
+
+
+def make_elicitation_session() -> tuple[CodexSession, FakeBridge]:
+    bridge = FakeBridge()
+    session = CodexSession("test", TaskTarget())
+    session.bridge = bridge
+    session.tasks["task-1"] = Task(
+        task_id="task-1",
+        thread_id="thread-1",
+        cwd="/tmp",
+        model="gpt-test",
+        plan=False,
+        sandbox_policy="workspace-write",
+        approval_policy="on-request",
+        request_rpc_id=99,
+        request_type="elicitation",
+        request_payload={"preview": "Need trip details", "server": "elicitation_demo"},
+        request_schema={
+            "type": "object",
+            "properties": {
+                "city": {"type": "string"},
+                "days": {"type": "integer"},
+            },
+            "required": ["city", "days"],
+        },
+    )
+    return session, bridge
+
+
+def test_codex_tasks_respond_sends_content_not_schema() -> None:
+    session, bridge = make_elicitation_session()
+    content = {
+        "city": "Shanghai",
+        "days": 3,
+        "budget": "medium",
+        "includeFood": True,
+    }
+
+    result = dispatch_task_action(
+        session,
+        "respond",
+        {"task_id": "task-1", "content": content},
+    )
+
+    assert json.loads(result) == {
+        "ok": True,
+        "task_id": "task-1",
+        "decision": "respond",
+    }
+    assert json.loads(bridge.sent[0]) == {
+        "jsonrpc": "2.0",
+        "id": 99,
+        "result": {"action": "accept", "content": content},
+    }
+    assert session.tasks["task-1"].request_rpc_id is None
+    assert session.tasks["task-1"].request_type is None
+    assert session.tasks["task-1"].request_schema is None
+
+
+def test_codex_tasks_approve_accepts_elicitation_with_empty_content() -> None:
+    session, bridge = make_elicitation_session()
+
+    result = dispatch_task_action(session, "approve", {"task_id": "task-1"})
+
+    assert json.loads(result) == {
+        "ok": True,
+        "task_id": "task-1",
+        "decision": "accept",
+    }
+    assert json.loads(bridge.sent[0]) == {
+        "jsonrpc": "2.0",
+        "id": 99,
+        "result": {"action": "accept", "content": {}},
+    }
+    assert session.tasks["task-1"].request_rpc_id is None
+    assert session.tasks["task-1"].request_type is None
+    assert session.tasks["task-1"].request_schema is None
+
+
+def test_codex_tasks_deny_declines_elicitation() -> None:
+    session, bridge = make_elicitation_session()
+
+    result = dispatch_task_action(session, "deny", {"task_id": "task-1"})
+
+    assert json.loads(result) == {
+        "ok": True,
+        "task_id": "task-1",
+        "decision": "decline",
+    }
+    assert json.loads(bridge.sent[0]) == {
+        "jsonrpc": "2.0",
+        "id": 99,
+        "result": {"action": "decline", "content": {}},
+    }

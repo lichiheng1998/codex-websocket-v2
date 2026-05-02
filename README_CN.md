@@ -88,8 +88,9 @@ Task 创建时会固定自己的 `model`、`plan`、`sandbox_policy`、`approval
 | `list` | `show_threads` | 列出 session task（或服务器全部 thread） |
 | `reply` | `task_id`, `message` | 向运行中的 task 发送后续 turn 消息 |
 | `answer` | `task_id`, `responses[]` 或 `answers[][]` | 回答 `requestUserInput`；一个问题多个答案时用 `answers[][]` |
-| `approve` | `task_id`, `for_session` | 批准挂起的命令 / elicitation。`for_session=true` 发送 `acceptForSession`（仅限命令执行类请求：本 session 内不再为类似命令弹出审批） |
-| `deny` | `task_id` | 拒绝挂起的命令 / elicitation |
+| `approve` | `task_id`, `for_session` | 批准挂起的命令，或用空 content `{}` 接受挂起的 elicitation。`for_session=true` 仅对命令审批发送 `acceptForSession` |
+| `deny` | `task_id` | 拒绝挂起的命令，或用空 content `{}` 拒绝挂起的 elicitation |
+| `respond` | `task_id`, `content` | 用符合 schema 的表单数据响应挂起的 elicitation |
 | `archive` | `target` | 归档指定 task（`task_id`）、当前 session 全部 task（`all`）或服务器全部 thread（`allthreads`）。若 thread 被其他 session 持有则拒绝。 |
 
 对于带 options 的 `requestUserInput` 问题，请用通知里显示的 option label 原样回答。

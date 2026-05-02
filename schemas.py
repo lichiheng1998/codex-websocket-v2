@@ -69,8 +69,12 @@ CODEX_TASKS = {
         "provide responses for one string per question, or answers for "
         "multiple strings per question. When Codex presents options, send the "
         "option labels exactly. "
-        "'approve'/'deny' resolve a pending command or elicitation request "
-        "(requires task_id). 'archive' removes a single task_id from this "
+        "'approve'/'deny' resolve a pending command request, or accept/decline "
+        "a pending MCP elicitation with empty content {} (requires task_id). "
+        "'respond' resolves a pending MCP elicitation request with schema data "
+        "(requires task_id and content). See the elicitation notification's "
+        "schema for required fields. "
+        "'archive' removes a single task_id from this "
         "session, or pass target='all' to archive every task in this session, "
         "or target='allthreads' to archive every thread on the server. "
         "Mirrors the user-facing /codex list/reply/approve/deny/archive "
@@ -81,11 +85,11 @@ CODEX_TASKS = {
         "properties": {
             "action": {
                 "type": "string",
-                "enum": ["list", "reply", "answer", "approve", "deny", "archive"],
+                "enum": ["list", "reply", "answer", "approve", "deny", "respond", "archive"],
             },
             "task_id": {
                 "type": "string",
-                "description": "Required for reply/answer/approve/deny.",
+                "description": "Required for reply/answer/approve/deny/respond.",
             },
             "message": {
                 "type": "string",
@@ -113,6 +117,14 @@ CODEX_TASKS = {
                     "than the question count the last group is repeated. "
                     "For option questions, use option labels. Mutually "
                     "exclusive with responses."
+                ),
+            },
+            "content": {
+                "type": "object",
+                "description": (
+                    "For respond: the form data matching the elicitation schema. "
+                    "See the pending request's notification for the schema definition. "
+                    "Omit or pass null to accept without data."
                 ),
             },
             "target": {
