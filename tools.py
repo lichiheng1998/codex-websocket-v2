@@ -7,11 +7,7 @@ from typing import Any
 
 from .codex_websocket_v2.core.session_registry import resolve_current_session
 from .codex_websocket_v2.surfaces.tool_actions import (
-    dispatch_action,
-    dispatch_approval_action,
-    dispatch_model_action,
-    dispatch_session_action,
-    dispatch_task_action,
+    dispatch_tool_action,
     error as _error,
     ok as _ok,
     optional_str as _optional_str,
@@ -89,7 +85,7 @@ def codex_tasks(args: dict, **kwargs: Any) -> str:
     session, error = _resolve_session_or_error()
     if error is not None:
         return error
-    return dispatch_task_action(session, action, args)
+    return dispatch_tool_action("task", session, action, args)
 
 
 def codex_approval(args: dict, **kwargs: Any) -> str:
@@ -100,7 +96,7 @@ def codex_approval(args: dict, **kwargs: Any) -> str:
     session, error = _resolve_session_or_error()
     if error is not None:
         return error
-    return dispatch_approval_action(session, action, args)
+    return dispatch_tool_action("approval", session, action, args)
 
 
 def codex_action(args: dict, **kwargs: Any) -> str:
@@ -111,7 +107,7 @@ def codex_action(args: dict, **kwargs: Any) -> str:
     session, error = _resolve_session_or_error()
     if error is not None:
         return error
-    return dispatch_action(session, action, args)
+    return dispatch_tool_action("action", session, action, args)
 
 
 def codex_models(args: dict, **kwargs: Any) -> str:
@@ -122,7 +118,7 @@ def codex_models(args: dict, **kwargs: Any) -> str:
     session, error = _resolve_session_or_error()
     if error is not None:
         return error
-    return dispatch_model_action(session, action, args)
+    return dispatch_tool_action("model", session, action, args)
 
 
 def codex_session(args: dict, **kwargs: Any) -> str:
@@ -133,7 +129,7 @@ def codex_session(args: dict, **kwargs: Any) -> str:
     session, error = _resolve_session_or_error()
     if error is not None:
         return error
-    return dispatch_session_action(session, action, args)
+    return dispatch_tool_action("session", session, action, args)
 
 
 def codex_revive(args: dict, **kwargs: Any) -> str:

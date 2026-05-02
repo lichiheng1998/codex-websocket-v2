@@ -95,6 +95,28 @@ def _tasks_list(session, args: dict) -> str:
     ])
 
 
+def _tasks_pending_schema(session, args: dict) -> str:
+    task_id, result_error = require_str(
+        args, "task_id", message="task_id is required for pending_schema"
+    )
+    if result_error is not None:
+        return result_error
+
+    task = session.tasks.get(task_id)
+    if task is None:
+        return error(f"unknown task `{task_id}`")
+
+    has_pending = task.request_rpc_id is not None
+    schema = task.request_schema if task.request_type == "elicitation" else None
+    return ok(
+        task_id=task_id,
+        has_pending=has_pending,
+        pending_type=task.request_type if has_pending else None,
+        has_schema=schema is not None,
+        schema=schema,
+    )
+
+
 def _tasks_reply(session, args: dict) -> str:
     task_id, result_error = require_str(
         args, "task_id", message="task_id is required for reply"
@@ -258,60 +280,6 @@ def _models_set(session, args: dict) -> str:
     return ok(**serialize_scope_result(result, "model"))
 
 
-CODEX_MODEL_ACTIONS: dict[str, ActionHandler] = {
-    "list": _models_list,
-    "get": _models_get,
-    "set": _models_set,
-}
-
-
-def dispatch_model_action(session, action: str, args: dict) -> str:
-    handler = CODEX_MODEL_ACTIONS.get(action)
-    if handler is None:
-        return error(f"unknown action {action!r}")
-    return handler(session, args)
-
-
-CODEX_TASK_ACTIONS: dict[str, ActionHandler] = {
-    "list": _tasks_list,
-    "archive": _tasks_archive,
-}
-
-
-CODEX_APPROVAL_ACTIONS: dict[str, ActionHandler] = {
-    "approve": _tasks_approve,
-    "deny": _tasks_deny,
-}
-
-
-CODEX_ACTIONS: dict[str, ActionHandler] = {
-    "reply": _tasks_reply,
-    "answer": _tasks_answer,
-    "respond": _tasks_respond,
-}
-
-
-def dispatch_task_action(session, action: str, args: dict) -> str:
-    handler = CODEX_TASK_ACTIONS.get(action)
-    if handler is None:
-        return error(f"unknown action {action!r}")
-    return handler(session, args)
-
-
-def dispatch_approval_action(session, action: str, args: dict) -> str:
-    handler = CODEX_APPROVAL_ACTIONS.get(action)
-    if handler is None:
-        return error(f"unknown action {action!r}")
-    return handler(session, args)
-
-
-def dispatch_action(session, action: str, args: dict) -> str:
-    handler = CODEX_ACTIONS.get(action)
-    if handler is None:
-        return error(f"unknown action {action!r}")
-    return handler(session, args)
-
-
 def _session_status(session, args: dict) -> str:
     task_id = optional_str(args, "task_id")
     result = session.get_status(task_id)
@@ -404,21 +372,42 @@ def _session_approval_set(session, args: dict) -> str:
     return ok(**result)
 
 
-CODEX_SESSION_ACTIONS: dict[str, ActionHandler] = {
-    "status": _session_status,
-    "plan_get": _session_plan_get,
-    "plan_set": _session_plan_set,
-    "verbose_get": _session_verbose_get,
-    "verbose_set": _session_verbose_set,
-    "sandbox_get": _session_sandbox_get,
-    "sandbox_set": _session_sandbox_set,
-    "approval_get": _session_approval_get,
-    "approval_set": _session_approval_set,
+ACTION_MAPS: dict[str, dict[str, ActionHandler]] = {
+    "model": {
+        "list": _models_list,
+        "get": _models_get,
+        "set": _models_set,
+    },
+    "task": {
+        "list": _tasks_list,
+        "pending_schema": _tasks_pending_schema,
+        "archive": _tasks_archive,
+    },
+    "approval": {
+        "approve": _tasks_approve,
+        "deny": _tasks_deny,
+    },
+    "action": {
+        "reply": _tasks_reply,
+        "answer": _tasks_answer,
+        "respond": _tasks_respond,
+    },
+    "session": {
+        "status": _session_status,
+        "plan_get": _session_plan_get,
+        "plan_set": _session_plan_set,
+        "verbose_get": _session_verbose_get,
+        "verbose_set": _session_verbose_set,
+        "sandbox_get": _session_sandbox_get,
+        "sandbox_set": _session_sandbox_set,
+        "approval_get": _session_approval_get,
+        "approval_set": _session_approval_set,
+    },
 }
 
 
-def dispatch_session_action(session, action: str, args: dict) -> str:
-    handler = CODEX_SESSION_ACTIONS.get(action)
+def dispatch_tool_action(map_name: str, session, action: str, args: dict) -> str:
+    handler = ACTION_MAPS[map_name].get(action)
     if handler is None:
         return error(f"unknown action {action!r}")
     return handler(session, args)

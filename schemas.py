@@ -59,6 +59,8 @@ CODEX_TASKS = {
         "Inspect or archive Codex tasks/threads in the current session. "
         "Action 'list' returns this session's tasks; pass show_threads=true "
         "to instead list every thread on the codex app-server. "
+        "'pending_schema' returns the schema for a task's pending MCP "
+        "elicitation request, if any. "
         "'archive' removes a single task_id from this "
         "session, or pass target='all' to archive every task in this session, "
         "or target='allthreads' to archive every thread on the server. "
@@ -70,7 +72,11 @@ CODEX_TASKS = {
         "properties": {
             "action": {
                 "type": "string",
-                "enum": ["list", "archive"],
+                "enum": ["list", "pending_schema", "archive"],
+            },
+            "task_id": {
+                "type": "string",
+                "description": "Required for pending_schema: the task_id to inspect.",
             },
             "target": {
                 "type": "string",

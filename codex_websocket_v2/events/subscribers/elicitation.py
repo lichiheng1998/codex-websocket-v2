@@ -29,6 +29,11 @@ def _dump_schema(schema: Any) -> dict[str, Any]:
     return dict(schema)
 
 
+def _schema_has_fields(schema: dict[str, Any]) -> bool:
+    properties = schema.get("properties")
+    return isinstance(properties, dict) and bool(properties)
+
+
 class ElicitationSubscriber:
     def __init__(self, session: "CodexSession") -> None:
         self.session = session
@@ -52,17 +57,26 @@ class ElicitationSubscriber:
         else:
             schema = _elicitation_value(elicitation, inner, "requestedSchema")
             schema_dict = _dump_schema(schema)
-            schema_json = json.dumps(schema_dict, ensure_ascii=False)[:MAX_ELICITATION_SCHEMA_PREVIEW]
-            stash_schema = schema_dict
-            heading = f"❓ `{task_id}` MCP `{server_name}` requests input:"
-            body = f"{elicit_msg}\nSchema: `{schema_json}`"
-            footer = (
-                "Use `respond` to provide schema data, or `approve`/`deny` "
-                "to send empty content.\n"
-                + f"Approve empty: `/codex approve {task_id}`\n"
-                + f"Respond: `/codex respond {task_id} {{...}}`\n"
-                + f"Decline: `/codex deny {task_id}`"
-            )
+            if _schema_has_fields(schema_dict):
+                schema_json = json.dumps(schema_dict, ensure_ascii=False)[:MAX_ELICITATION_SCHEMA_PREVIEW]
+                stash_schema = schema_dict
+                heading = f"❓ `{task_id}` MCP `{server_name}` requests input:"
+                body = f"{elicit_msg}\nSchema: `{schema_json}`"
+                footer = (
+                    "Use `respond` to provide schema data, or `approve`/`deny` "
+                    "to send empty content.\n"
+                    + f"Approve empty: `/codex approve {task_id}`\n"
+                    + f"Respond: `/codex respond {task_id} {{...}}`\n"
+                    + f"Decline: `/codex deny {task_id}`"
+                )
+            else:
+                stash_schema = None
+                heading = f"❓ `{task_id}` MCP `{server_name}` requests confirmation:"
+                body = elicit_msg
+                footer = (
+                    f"Approve: `/codex approve {task_id}`\n"
+                    + f"Decline: `/codex deny {task_id}`"
+                )
 
         notification = "\n".join([heading, body, "", footer])
         self.session.stash_request(task, event.rpc_id, "elicitation",
