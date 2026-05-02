@@ -87,10 +87,12 @@ Manage tasks and threads in the current session.
 |---|---|---|
 | `list` | `show_threads` | List session tasks (or all server threads) |
 | `reply` | `task_id`, `message` | Send a follow-up turn message to a running task |
-| `answer` | `task_id`, `responses[]` | Answer a `requestUserInput` — one string per question in order |
+| `answer` | `task_id`, `responses[]` or `answers[][]` | Answer a `requestUserInput`; use `answers[][]` for multiple answers per question |
 | `approve` | `task_id`, `for_session` | Approve a pending command / elicitation. Set `for_session=true` to send `acceptForSession` (command-execution only: stops Codex prompting for similar commands this session) |
 | `deny` | `task_id` | Deny a pending command / elicitation |
 | `archive` | `target` | Archive a specific task (`task_id`), all session tasks (`all`), or every server thread (`allthreads`). Blocked if the thread is held by another active session. |
+
+For `requestUserInput` questions with options, answer with the exact option label shown in the notification.
 
 > **Note:** `turn/completed` means one turn ended — the thread is still alive. Use `reply` to continue. Only use `codex_revive` for threads no longer tracked in the current session.
 
@@ -121,6 +123,7 @@ For scoped actions, omit `task_id` to operate on the session default; pass `task
 /codex reply <task_id> <message>              — send a follow-up turn to Codex
 /codex answer <task_id> <answer>              — answer a single Codex question
 /codex answer <task_id> <a1> | <a2> | <a3>   — answer multiple questions (separated by ' | ')
+/codex answer <task_id> [q1a|q1b] [q2a]      — multiple answers for individual questions
 /codex approve <task_id>                      — approve a pending request
 /codex approve --all <task_id>                — approve and stop prompting for similar commands this session
 /codex deny <task_id>                         — deny a pending request

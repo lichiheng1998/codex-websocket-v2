@@ -64,9 +64,11 @@ CODEX_TASKS = {
         "turn/completed — turn/completed only means the current turn ended, "
         "NOT that the thread is finished; the thread stays alive and tracked. "
         "'answer' resolves a pending requestUserInput from Codex (requires "
-        "task_id and responses array). Use this — not reply — when Codex "
+        "task_id plus responses or answers). Use this — not reply — when Codex "
         "explicitly asked one or more questions and is waiting for answers; "
-        "provide one string per question in order. "
+        "provide responses for one string per question, or answers for "
+        "multiple strings per question. When Codex presents options, send the "
+        "option labels exactly. "
         "'approve'/'deny' resolve a pending command or elicitation request "
         "(requires task_id). 'archive' removes a single task_id from this "
         "session, or pass target='all' to archive every task in this session, "
@@ -93,9 +95,24 @@ CODEX_TASKS = {
                 "type": "array",
                 "items": {"type": "string"},
                 "description": (
-                    "Required for answer: one string per question in the order "
-                    "Codex presented them. The array is sent as-is; if shorter "
-                    "than the question count the last entry is repeated."
+                    "For answer: one string per question in the order Codex "
+                    "presented them. If shorter than the question count the "
+                    "last entry is repeated. For option questions, use the "
+                    "option label. Mutually exclusive with answers."
+                ),
+            },
+            "answers": {
+                "type": "array",
+                "items": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                },
+                "description": (
+                    "For answer: one non-empty string array per question, "
+                    "allowing multiple answers for one question. If shorter "
+                    "than the question count the last group is repeated. "
+                    "For option questions, use option labels. Mutually "
+                    "exclusive with responses."
                 ),
             },
             "target": {

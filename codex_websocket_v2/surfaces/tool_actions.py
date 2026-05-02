@@ -119,7 +119,28 @@ def _tasks_answer(session, args: dict) -> str:
     )
     if result_error is not None:
         return result_error
+    answers = args.get("answers")
     responses = args.get("responses")
+    if answers is not None and responses is not None:
+        return error("answers and responses are mutually exclusive")
+    if answers is not None:
+        if not isinstance(answers, list) or not answers:
+            return error("answers must be a non-empty list of non-empty string arrays")
+        if not all(
+            isinstance(group, list)
+            and group
+            and all(isinstance(item, str) for item in group)
+            for group in answers
+        ):
+            return error("answers must be a non-empty list of non-empty string arrays")
+        try:
+            result = session.input_task(task_id, answers=answers)
+        except Exception as exc:
+            return error(f"input_task failed: {exc}")
+        if result_error := tool_error_from_result(result):
+            return result_error
+        return ok(task_id=task_id)
+
     if not isinstance(responses, list) or not responses:
         return error("responses must be a non-empty list of strings")
     if not all(isinstance(r, str) for r in responses):

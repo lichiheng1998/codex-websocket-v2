@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import re
 import shlex
 from typing import Callable, Optional
 
@@ -21,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 MAX_TASKS_DISPLAY = 20
 MAX_PREVIEW_LENGTH = 60
+ANSWER_GROUP_RE = re.compile(r"\[([^\]]+)\]")
 
 
 # ---------------------------------------------------------------------------
@@ -175,6 +177,7 @@ def _cmd_help() -> str:
         "  `/codex reply <task_id> <message>` — send follow-up turn to Codex\n"
         "  `/codex answer <task_id> <answer>` — answer a Codex question\n"
         "  `/codex answer <task_id> <a1> | <a2> | <a3>` — answer multiple questions (separate with ' | ')\n"
+        "  `/codex answer <task_id> [q1a|q1b] [q2a]` — multiple answers for individual questions\n"
         "  `/codex approve <task_id>` — approve a pending Codex request\n"
         "  `/codex approve --all <task_id>` — approve and stop prompting for similar commands this session\n"
         "  `/codex deny <task_id>` — deny a pending Codex request\n"
@@ -455,7 +458,23 @@ def _cmd_answer(ns: argparse.Namespace) -> str:
     task_id = ns.task_id
     raw = " ".join(ns.answers).strip() if ns.answers else ""
     if not raw:
-        return "Missing answer. Usage: `/codex answer <task_id> <answer>` or `/codex answer <task_id> <a1> | <a2> | <a3>`"
+        return (
+            "Missing answer. Usage: `/codex answer <task_id> <answer>`, "
+            "`/codex answer <task_id> <a1> | <a2>`, or "
+            "`/codex answer <task_id> [<q1a>|<q1b>] [<q2a>]`"
+        )
+    grouped_answers = _parse_answer_groups(raw)
+    if grouped_answers is not None:
+        result = _call("codex_tasks", {
+            "action": "answer",
+            "task_id": task_id,
+            "answers": grouped_answers,
+        })
+        if not result.get("ok"):
+            return f"Failed: {result.get('error', 'unknown error')}"
+        n = len(grouped_answers)
+        return f"Answered {n} question{'s' if n != 1 else ''} for Codex task `{task_id}`."
+
     responses = [r.strip() for r in raw.split(" | ")]
     responses = [r for r in responses if r]
     if not responses:
@@ -469,6 +488,31 @@ def _cmd_answer(ns: argparse.Namespace) -> str:
         return f"Failed: {result.get('error', 'unknown error')}"
     n = len(responses)
     return f"Answered {n} question{'s' if n != 1 else ''} for Codex task `{task_id}`."
+
+
+def _parse_answer_groups(raw: str) -> Optional[list[list[str]]]:
+    """Parse bracketed per-question answer groups.
+
+    Examples:
+    ``[a|b]`` means one question with two answers.
+    ``[a|b] [c]`` means two questions.
+    Non-bracket input falls back to the legacy ``" | "`` separator.
+    """
+    groups = list(ANSWER_GROUP_RE.finditer(raw))
+    if not groups:
+        return None
+    remainder = ANSWER_GROUP_RE.sub("", raw).strip()
+    if remainder:
+        return None
+
+    parsed: list[list[str]] = []
+    for group in groups:
+        answers = [answer.strip() for answer in group.group(1).split("|")]
+        answers = [answer for answer in answers if answer]
+        if not answers:
+            return None
+        parsed.append(answers)
+    return parsed
 
 
 _SANDBOX_ALIASES = {

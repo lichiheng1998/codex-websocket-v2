@@ -87,10 +87,12 @@ Task 创建时会固定自己的 `model`、`plan`、`sandbox_policy`、`approval
 |---|---|---|
 | `list` | `show_threads` | 列出 session task（或服务器全部 thread） |
 | `reply` | `task_id`, `message` | 向运行中的 task 发送后续 turn 消息 |
-| `answer` | `task_id`, `responses[]` | 回答 `requestUserInput`，按顺序每个问题一个字符串 |
+| `answer` | `task_id`, `responses[]` 或 `answers[][]` | 回答 `requestUserInput`；一个问题多个答案时用 `answers[][]` |
 | `approve` | `task_id`, `for_session` | 批准挂起的命令 / elicitation。`for_session=true` 发送 `acceptForSession`（仅限命令执行类请求：本 session 内不再为类似命令弹出审批） |
 | `deny` | `task_id` | 拒绝挂起的命令 / elicitation |
 | `archive` | `target` | 归档指定 task（`task_id`）、当前 session 全部 task（`all`）或服务器全部 thread（`allthreads`）。若 thread 被其他 session 持有则拒绝。 |
+
+对于带 options 的 `requestUserInput` 问题，请用通知里显示的 option label 原样回答。
 
 > **注意：** `turn/completed` 只代表当前 turn 结束，thread 仍然存活。用 `reply` 继续对话。仅在 thread 不在当前 session 中被追踪时（如 gateway 重启后）才使用 `codex_revive`。
 
@@ -121,6 +123,7 @@ Task 创建时会固定自己的 `model`、`plan`、`sandbox_policy`、`approval
 /codex reply <task_id> <message>              — 向 Codex 发送后续 turn 消息
 /codex answer <task_id> <answer>              — 回答单个 Codex 问题
 /codex answer <task_id> <a1> | <a2> | <a3>   — 回答多个问题（用 ' | ' 分隔）
+/codex answer <task_id> [q1a|q1b] [q2a]      — 为单个问题提供多个答案
 /codex approve <task_id>                      — 批准挂起的请求
 /codex approve --all <task_id>                — 批准并本 session 内不再为类似命令弹审批
 /codex deny <task_id>                         — 拒绝挂起的请求

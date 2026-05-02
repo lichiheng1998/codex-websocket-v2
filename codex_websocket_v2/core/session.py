@@ -212,10 +212,6 @@ class CodexSession:
         if task is None:
             return err(f"unknown task id {task_id!r}")
 
-        # If the task has a pending input request, route the reply as input answers.
-        if task.request_type == "input":
-            return self.input_task(task_id, message)
-
         async def _boot() -> None:
             asyncio.create_task(self._drive_reply(task_id, message))
 
@@ -453,11 +449,19 @@ class CodexSession:
         task.request_payload = None
         return ok(decision=decision)
 
-    def input_task(self, task_id: str, answer: str = "", *, responses: "list[str] | None" = None) -> Result:
+    def input_task(
+        self,
+        task_id: str,
+        answer: str = "",
+        *,
+        responses: "list[str] | None" = None,
+        answers: "list[list[str]] | None" = None,
+    ) -> Result:
         """Resolve a pending input request by sending the user's answer(s).
 
-        Pass ``responses`` (one string per question) when the LLM knows all
-        answers; fall back to ``answer`` which is replicated across all questions.
+        Pass ``responses`` for one answer per question, or ``answers`` for
+        multiple answers per question. Fall back to ``answer`` replicated
+        across all questions.
         """
         task = self.tasks.get(task_id)
         if task is None or task.request_rpc_id is None:
@@ -466,19 +470,50 @@ class CodexSession:
             return err(f"task `{task_id}` has a {task.request_type!r} request, not input")
 
         questions = (task.request_payload or {}).get("questions") or []
-        n = len(questions) or 1
-        if responses is not None:
+        if not questions:
+            return err(f"pending input for task `{task_id}` has no questions")
+        n = len(questions)
+        if answers is not None:
+            if not answers or not all(group for group in answers):
+                return err("answers must be a non-empty list of non-empty answer groups")
+            # Pad or truncate answer groups to match question count.
+            pad = list(answers[-1]) if answers else []
+            answer_groups = [list(group) for group in answers]
+            answer_groups = (answer_groups + [pad] * n)[:n]
+        elif responses is not None:
             # Pad or truncate to match question count.
             pad = responses[-1] if responses else ""
             responses = (list(responses) + [pad] * n)[:n]
+            answer_groups = [[response] for response in responses]
         else:
-            responses = [answer] * n
+            answer_groups = [[answer] for _ in range(n)]
+
+        response_payload = {}
+        for idx, question in enumerate(questions):
+            question_id = getattr(question, "id", None)
+            if not question_id:
+                return err(f"pending input question {idx + 1} has no id")
+            options = getattr(question, "options", None) or []
+            allowed = {
+                str(getattr(option, "label", "") or "")
+                for option in options
+                if getattr(option, "label", None)
+            }
+            if allowed and not getattr(question, "isOther", False):
+                invalid = [answer for answer in answer_groups[idx] if answer not in allowed]
+                if invalid:
+                    allowed_list = ", ".join(sorted(allowed))
+                    return err(
+                        f"invalid answer for question {idx + 1}: "
+                        f"{', '.join(invalid)}; use one of: {allowed_list}"
+                    )
+            response_payload[str(question_id)] = {"answers": answer_groups[idx]}
 
         rpc_id = task.request_rpc_id
         send = self.bridge.run_sync(
             self.bridge.ws_send(json.dumps({
                 "jsonrpc": "2.0", "id": rpc_id,
-                "result": {"responses": responses},
+                "result": {"answers": response_payload},
             })),
             timeout=SHORT_RPC_TIMEOUT,
         )
@@ -841,12 +876,13 @@ class CodexSession:
         model: str,
         plan: bool,
         sandbox_policy: str,
+        approval_policy: str,
     ) -> "wire.TurnStartParams":
         return wire.TurnStartParams(
             threadId=thread_id,
             input=[{"type": "text", "text": text}],
             model=model,
-            approvalPolicy=wire.all_granular_approval_policy(),
+            approvalPolicy=approval_policy,
             sandboxPolicy=prepare_sandbox(sandbox_policy, cwd),
             collaborationMode=(
                 plan_collaboration_mode(model)
@@ -903,7 +939,7 @@ class CodexSession:
             self._build_turn_start(
                 thread_id=thread_id, text=prompt, cwd=cwd,
                 model=model, plan=plan,
-                sandbox_policy=sandbox_policy,
+                sandbox_policy=sandbox_policy, approval_policy=approval_policy,
             ),
         )
         if not turn_rpc["ok"]:
@@ -923,6 +959,7 @@ class CodexSession:
                 model=self._task_model(task),
                 plan=self._task_plan(task),
                 sandbox_policy=self._task_sandbox_policy(task),
+                approval_policy=self._task_approval_policy(task),
             ),
         )
         if not rpc["ok"]:

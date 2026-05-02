@@ -47,10 +47,7 @@ _import_schema("ServerRequest")
 
 # Outbound client→server params (used by bridge when calling _rpc).
 from ClientRequest import (  # noqa: E402
-    AskForApproval,
-    AskForApproval2,
     ConfigReadParams,
-    Granular,
     InitializeParams,
     InitializeCapabilities,
     ModelListParams,
@@ -80,9 +77,6 @@ from ServerRequest import ServerRequest  # noqa: E402
 
 __all__ = [
     "ConfigReadParams",
-    "AskForApproval",
-    "AskForApproval2",
-    "Granular",
     "InitializeParams",
     "InitializeCapabilities",
     "ModelListParams",
@@ -106,26 +100,10 @@ __all__ = [
     "parse_incoming",
     "IncomingKind",
     "ParsedIncoming",
-    "all_granular_approval_policy",
 ]
 
 IncomingKind = str  # "response" | "error" | "request" | "notification" | "unknown"
 ParsedIncoming = Tuple[IncomingKind, Any, dict]
-
-
-def all_granular_approval_policy() -> AskForApproval:
-    """Enable every granular approval channel for outbound turn starts."""
-    return AskForApproval(
-        root=AskForApproval2(
-            granular=Granular(
-                mcp_elicitations=True,
-                request_permissions=True,
-                rules=True,
-                sandbox_approval=True,
-                skill_approval=True,
-            )
-        )
-    )
 
 
 def serialize(params: Union[BaseModel, dict, None]) -> dict:
