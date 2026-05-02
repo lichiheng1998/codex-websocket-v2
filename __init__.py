@@ -54,6 +54,20 @@ def register(ctx) -> None:
         check_fn=_codex_available,
     )
     ctx.register_tool(
+        name="codex_approval",
+        toolset="codex_bridge",
+        schema=schemas.CODEX_APPROVAL,
+        handler=tools.codex_approval,
+        check_fn=_codex_available,
+    )
+    ctx.register_tool(
+        name="codex_action",
+        toolset="codex_bridge",
+        schema=schemas.CODEX_ACTION,
+        handler=tools.codex_action,
+        check_fn=_codex_available,
+    )
+    ctx.register_tool(
         name="codex_models",
         toolset="codex_bridge",
         schema=schemas.CODEX_MODELS,

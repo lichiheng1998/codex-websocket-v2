@@ -338,7 +338,7 @@ def _cmd_model(args: list[str]) -> str:
 
 
 def _cmd_approve(task_id: str, for_session: bool = False) -> str:
-    result = _call("codex_tasks", {"action": "approve", "task_id": task_id, "for_session": for_session})
+    result = _call("codex_approval", {"action": "approve", "task_id": task_id, "for_session": for_session})
     if result.get("ok"):
         if for_session:
             return f"Approved task `{task_id}` for session (similar commands won't prompt again)."
@@ -347,7 +347,7 @@ def _cmd_approve(task_id: str, for_session: bool = False) -> str:
 
 
 def _cmd_deny(task_id: str) -> str:
-    result = _call("codex_tasks", {"action": "deny", "task_id": task_id})
+    result = _call("codex_approval", {"action": "deny", "task_id": task_id})
     if result.get("ok"):
         return f"Denied task `{task_id}`."
     return f"Failed: {result.get('error', 'unknown error')}"
@@ -361,7 +361,7 @@ def _cmd_respond(task_id: str, content_json: str | None) -> str:
             content = _json.loads(content_json)
         except _json.JSONDecodeError as exc:
             return f"Invalid JSON: {exc}"
-    result = _call("codex_tasks", {"action": "respond", "task_id": task_id, "content": content})
+    result = _call("codex_action", {"action": "respond", "task_id": task_id, "content": content})
     if result.get("ok"):
         return f"Responded to elicitation for task `{task_id}`."
     return f"Failed: {result.get('error', 'unknown error')}"
@@ -464,7 +464,7 @@ def _cmd_reply(ns: argparse.Namespace) -> str:
     message = " ".join(ns.message).strip() if ns.message else ""
     if not message:
         return "Missing message. Usage: `/codex reply <task_id> <message>`"
-    result = _call("codex_tasks", {
+    result = _call("codex_action", {
         "action": "reply",
         "task_id": task_id,
         "message": message,
@@ -485,7 +485,7 @@ def _cmd_answer(ns: argparse.Namespace) -> str:
         )
     grouped_answers = _parse_answer_groups(raw)
     if grouped_answers is not None:
-        result = _call("codex_tasks", {
+        result = _call("codex_action", {
             "action": "answer",
             "task_id": task_id,
             "answers": grouped_answers,
@@ -499,7 +499,7 @@ def _cmd_answer(ns: argparse.Namespace) -> str:
     responses = [r for r in responses if r]
     if not responses:
         return "Empty answer."
-    result = _call("codex_tasks", {
+    result = _call("codex_action", {
         "action": "answer",
         "task_id": task_id,
         "responses": responses,

@@ -7,12 +7,12 @@ CODEX_REVIVE = {
     "description": (
         "Revive a Codex thread from a previous session (e.g. after gateway "
         "restart). Restores the thread into the active task map so the user "
-        "can send follow-up turns via codex_tasks reply. "
+        "can send follow-up turns via codex_action reply. "
         "IMPORTANT: only revive threads whose status is truly terminated or "
         "unknown — do NOT revive a thread just because you received a "
         "turn/completed notification. turn/completed means one turn finished "
         "and Codex is idle waiting for the next prompt; the thread is still "
-        "alive and tracked. Use codex_tasks reply to continue it instead. "
+        "alive and tracked. Use codex_action reply to continue it instead. "
         "The session's sandbox_policy (set via codex_session sandbox_set or "
         "/codex sandbox) is used automatically for revived threads unless "
         "sandbox_policy is passed. Model, plan, sandbox, and approval values "
@@ -56,40 +56,95 @@ CODEX_REVIVE = {
 CODEX_TASKS = {
     "name": "codex_tasks",
     "description": (
-        "Inspect or act on Codex tasks/threads in the current session. "
+        "Inspect or archive Codex tasks/threads in the current session. "
         "Action 'list' returns this session's tasks; pass show_threads=true "
         "to instead list every thread on the codex app-server. "
-        "'reply' sends a follow-up turn message to a running task (requires "
-        "task_id and message). Use this to continue a conversation after "
-        "turn/completed — turn/completed only means the current turn ended, "
-        "NOT that the thread is finished; the thread stays alive and tracked. "
-        "'answer' resolves a pending requestUserInput from Codex (requires "
-        "task_id plus responses or answers). Use this — not reply — when Codex "
-        "explicitly asked one or more questions and is waiting for answers; "
-        "provide responses for one string per question, or answers for "
-        "multiple strings per question. When Codex presents options, send the "
-        "option labels exactly. "
-        "'approve'/'deny' resolve a pending command request, or accept/decline "
-        "a pending MCP elicitation with empty content {} (requires task_id). "
-        "'respond' resolves a pending MCP elicitation request with schema data "
-        "(requires task_id and content). See the elicitation notification's "
-        "schema for required fields. "
         "'archive' removes a single task_id from this "
         "session, or pass target='all' to archive every task in this session, "
         "or target='allthreads' to archive every thread on the server. "
-        "Mirrors the user-facing /codex list/reply/approve/deny/archive "
-        "subcommands."
+        "Use codex_action for reply/answer/respond and codex_approval for "
+        "approve/deny."
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "action": {
                 "type": "string",
-                "enum": ["list", "reply", "answer", "approve", "deny", "respond", "archive"],
+                "enum": ["list", "archive"],
+            },
+            "target": {
+                "type": "string",
+                "description": (
+                    "For archive: a task_id, 'all' (this session's tasks), "
+                    "or 'allthreads' (every thread on the server)."
+                ),
+            },
+            "show_threads": {
+                "type": "boolean",
+                "description": "For list: include all server threads instead of session tasks.",
+            },
+        },
+        "required": ["action"],
+    },
+}
+
+
+CODEX_APPROVAL = {
+    "name": "codex_approval",
+    "description": (
+        "Approve or deny a pending Codex request for a task. "
+        "'approve'/'deny' resolve a pending command request, or accept/decline "
+        "a pending MCP elicitation with empty content {}. "
+        "Use codex_action respond when an elicitation requires schema data."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": ["approve", "deny"],
             },
             "task_id": {
                 "type": "string",
-                "description": "Required for reply/answer/approve/deny/respond.",
+                "description": "Required task_id for the pending request.",
+            },
+            "for_session": {
+                "type": "boolean",
+                "description": (
+                    "For approve: send acceptForSession instead of accept. "
+                    "Valid for command-execution approvals only; ignored for "
+                    "elicitation empty-content approvals."
+                ),
+            },
+        },
+        "required": ["action", "task_id"],
+    },
+}
+
+
+CODEX_ACTION = {
+    "name": "codex_action",
+    "description": (
+        "Send follow-up action data to an existing Codex task. "
+        "'reply' sends a follow-up turn message to a running task. "
+        "Use this to continue a conversation after turn/completed; "
+        "turn/completed only means the current turn ended, not that the thread "
+        "is finished. 'answer' resolves a pending requestUserInput from Codex; "
+        "provide responses for one string per question, or answers for multiple "
+        "strings per question. When Codex presents options, send option labels "
+        "exactly. 'respond' resolves a pending MCP elicitation request with "
+        "schema data."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": ["reply", "answer", "respond"],
+            },
+            "task_id": {
+                "type": "string",
+                "description": "Required task_id for reply/answer/respond.",
             },
             "message": {
                 "type": "string",
@@ -127,27 +182,8 @@ CODEX_TASKS = {
                     "Omit or pass null to accept without data."
                 ),
             },
-            "target": {
-                "type": "string",
-                "description": (
-                    "For archive: a task_id, 'all' (this session's tasks), "
-                    "or 'allthreads' (every thread on the server)."
-                ),
-            },
-            "for_session": {
-                "type": "boolean",
-                "description": (
-                    "For approve: send acceptForSession instead of accept. "
-                    "Valid for command-execution and file-change approvals (not permissions). "
-                    "Tells Codex to stop prompting for similar commands/writes for the rest of the session."
-                ),
-            },
-            "show_threads": {
-                "type": "boolean",
-                "description": "For list: include all server threads instead of session tasks.",
-            },
         },
-        "required": ["action"],
+        "required": ["action", "task_id"],
     },
 }
 
@@ -265,14 +301,14 @@ CODEX_TASK = {
         "**Returns immediately with a task_id** — Codex runs asynchronously; "
         "progress updates, approval requests, and the final result are pushed "
         "to the current chat as separate messages. Command/file-change "
-        "approvals route through codex_tasks approve/deny. "
+        "approvals route through codex_approval approve/deny. "
         "IMPORTANT: a turn/completed notification means one turn ended and "
         "Codex is idle — it does NOT mean the thread is finished or needs "
-        "reviving. To send a follow-up prompt use codex_tasks reply. Only use "
+        "reviving. To send a follow-up prompt use codex_action reply. Only use "
         "codex_revive for threads that are no longer tracked in this session "
         "(e.g. after a gateway restart). "
         "If Codex asks one or more questions (requestUserInput), answer with "
-        "codex_tasks answer (not reply). "
+        "codex_action answer (not reply). "
         "Model, plan, sandbox_policy, and approval_policy are fixed on the "
         "task when it is created. Omitted values are copied from the session "
         "defaults; future replies use the task's own values. "

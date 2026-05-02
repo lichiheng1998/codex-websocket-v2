@@ -81,17 +81,29 @@ codex --version
 Task 创建时会固定自己的 `model`、`plan`、`sandbox_policy`、`approval_policy`。后续 reply 使用 task 自己的值；修改 session default 只影响未来 task。
 
 ### `codex_tasks`
-管理当前 session 的 task 和 thread。
+列出或归档当前 session 的 task 和 thread。
 
 | Action | 参数 | 说明 |
 |---|---|---|
 | `list` | `show_threads` | 列出 session task（或服务器全部 thread） |
+| `archive` | `target` | 归档指定 task（`task_id`）、当前 session 全部 task（`all`）或服务器全部 thread（`allthreads`）。若 thread 被其他 session 持有则拒绝。 |
+
+### `codex_action`
+向已有 task 发送后续动作。
+
+| Action | 参数 | 说明 |
+|---|---|---|
 | `reply` | `task_id`, `message` | 向运行中的 task 发送后续 turn 消息 |
 | `answer` | `task_id`, `responses[]` 或 `answers[][]` | 回答 `requestUserInput`；一个问题多个答案时用 `answers[][]` |
+| `respond` | `task_id`, `content` | 用符合 schema 的表单数据响应挂起的 elicitation |
+
+### `codex_approval`
+处理挂起的审批类请求。
+
+| Action | 参数 | 说明 |
+|---|---|---|
 | `approve` | `task_id`, `for_session` | 批准挂起的命令，或用空 content `{}` 接受挂起的 elicitation。`for_session=true` 仅对命令审批发送 `acceptForSession` |
 | `deny` | `task_id` | 拒绝挂起的命令，或用空 content `{}` 拒绝挂起的 elicitation |
-| `respond` | `task_id`, `content` | 用符合 schema 的表单数据响应挂起的 elicitation |
-| `archive` | `target` | 归档指定 task（`task_id`）、当前 session 全部 task（`all`）或服务器全部 thread（`allthreads`）。若 thread 被其他 session 持有则拒绝。 |
 
 对于带 options 的 `requestUserInput` 问题，请用通知里显示的 option label 原样回答。
 

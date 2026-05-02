@@ -7,6 +7,8 @@ from typing import Any
 
 from .codex_websocket_v2.core.session_registry import resolve_current_session
 from .codex_websocket_v2.surfaces.tool_actions import (
+    dispatch_action,
+    dispatch_approval_action,
     dispatch_model_action,
     dispatch_session_action,
     dispatch_task_action,
@@ -88,6 +90,28 @@ def codex_tasks(args: dict, **kwargs: Any) -> str:
     if error is not None:
         return error
     return dispatch_task_action(session, action, args)
+
+
+def codex_approval(args: dict, **kwargs: Any) -> str:
+    action = (args.get("action") or "").strip()
+    if not action:
+        return _error("action is required")
+
+    session, error = _resolve_session_or_error()
+    if error is not None:
+        return error
+    return dispatch_approval_action(session, action, args)
+
+
+def codex_action(args: dict, **kwargs: Any) -> str:
+    action = (args.get("action") or "").strip()
+    if not action:
+        return _error("action is required")
+
+    session, error = _resolve_session_or_error()
+    if error is not None:
+        return error
+    return dispatch_action(session, action, args)
 
 
 def codex_models(args: dict, **kwargs: Any) -> str:

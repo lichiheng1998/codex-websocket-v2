@@ -274,17 +274,39 @@ def dispatch_model_action(session, action: str, args: dict) -> str:
 
 CODEX_TASK_ACTIONS: dict[str, ActionHandler] = {
     "list": _tasks_list,
-    "reply": _tasks_reply,
-    "answer": _tasks_answer,
+    "archive": _tasks_archive,
+}
+
+
+CODEX_APPROVAL_ACTIONS: dict[str, ActionHandler] = {
     "approve": _tasks_approve,
     "deny": _tasks_deny,
+}
+
+
+CODEX_ACTIONS: dict[str, ActionHandler] = {
+    "reply": _tasks_reply,
+    "answer": _tasks_answer,
     "respond": _tasks_respond,
-    "archive": _tasks_archive,
 }
 
 
 def dispatch_task_action(session, action: str, args: dict) -> str:
     handler = CODEX_TASK_ACTIONS.get(action)
+    if handler is None:
+        return error(f"unknown action {action!r}")
+    return handler(session, args)
+
+
+def dispatch_approval_action(session, action: str, args: dict) -> str:
+    handler = CODEX_APPROVAL_ACTIONS.get(action)
+    if handler is None:
+        return error(f"unknown action {action!r}")
+    return handler(session, args)
+
+
+def dispatch_action(session, action: str, args: dict) -> str:
+    handler = CODEX_ACTIONS.get(action)
     if handler is None:
         return error(f"unknown action {action!r}")
     return handler(session, args)

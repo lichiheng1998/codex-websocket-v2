@@ -8,7 +8,12 @@ from codex_websocket_v2.core.session import CodexSession
 from codex_websocket_v2.core.state import Task, TaskTarget
 from codex_websocket_v2.events.factory import EventFactory
 from codex_websocket_v2.events.subscribers.elicitation import ElicitationSubscriber
-from codex_websocket_v2.surfaces.tool_actions import dispatch_task_action
+from codex_websocket_v2.surfaces import commands
+from codex_websocket_v2.surfaces.tool_actions import (
+    dispatch_action,
+    dispatch_approval_action,
+    dispatch_task_action,
+)
 
 
 class FakeBridge:
@@ -124,7 +129,7 @@ def make_elicitation_session() -> tuple[CodexSession, FakeBridge]:
     return session, bridge
 
 
-def test_codex_tasks_respond_sends_content_not_schema() -> None:
+def test_codex_action_respond_sends_content_not_schema() -> None:
     session, bridge = make_elicitation_session()
     content = {
         "city": "Shanghai",
@@ -133,7 +138,7 @@ def test_codex_tasks_respond_sends_content_not_schema() -> None:
         "includeFood": True,
     }
 
-    result = dispatch_task_action(
+    result = dispatch_action(
         session,
         "respond",
         {"task_id": "task-1", "content": content},
@@ -154,10 +159,10 @@ def test_codex_tasks_respond_sends_content_not_schema() -> None:
     assert session.tasks["task-1"].request_schema is None
 
 
-def test_codex_tasks_approve_accepts_elicitation_with_empty_content() -> None:
+def test_codex_approval_approve_accepts_elicitation_with_empty_content() -> None:
     session, bridge = make_elicitation_session()
 
-    result = dispatch_task_action(session, "approve", {"task_id": "task-1"})
+    result = dispatch_approval_action(session, "approve", {"task_id": "task-1"})
 
     assert json.loads(result) == {
         "ok": True,
@@ -174,10 +179,10 @@ def test_codex_tasks_approve_accepts_elicitation_with_empty_content() -> None:
     assert session.tasks["task-1"].request_schema is None
 
 
-def test_codex_tasks_deny_declines_elicitation() -> None:
+def test_codex_approval_deny_declines_elicitation() -> None:
     session, bridge = make_elicitation_session()
 
-    result = dispatch_task_action(session, "deny", {"task_id": "task-1"})
+    result = dispatch_approval_action(session, "deny", {"task_id": "task-1"})
 
     assert json.loads(result) == {
         "ok": True,
@@ -189,3 +194,37 @@ def test_codex_tasks_deny_declines_elicitation() -> None:
         "id": 99,
         "result": {"action": "decline", "content": {}},
     }
+
+
+def test_codex_tasks_rejects_moved_actions() -> None:
+    session, _ = make_elicitation_session()
+
+    for action in ("reply", "answer", "approve", "deny", "respond"):
+        result = json.loads(dispatch_task_action(session, action, {"task_id": "task-1"}))
+        assert result == {"ok": False, "error": f"unknown action {action!r}"}
+
+
+def test_slash_commands_route_to_split_tools() -> None:
+    calls: list[tuple[str, dict]] = []
+
+    def dispatch(tool_name: str, args: dict) -> str:
+        calls.append((tool_name, args))
+        return json.dumps({"ok": True})
+
+    commands.set_dispatch(dispatch)
+
+    commands.handle_slash("approve task-1")
+    commands.handle_slash("deny task-1")
+    commands.handle_slash("respond task-1 '{\"city\":\"Shanghai\"}'")
+    commands.handle_slash("reply task-1 hello")
+    commands.handle_slash("answer task-1 yes")
+    commands.handle_slash("archive task-1")
+
+    assert [tool_name for tool_name, _ in calls] == [
+        "codex_approval",
+        "codex_approval",
+        "codex_action",
+        "codex_action",
+        "codex_action",
+        "codex_tasks",
+    ]
