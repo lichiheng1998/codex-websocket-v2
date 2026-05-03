@@ -60,6 +60,28 @@ def serialize_scope_result(result: dict, *fields: str) -> dict:
     return data
 
 
+def jsonable(value: Any) -> Any:
+    if hasattr(value, "model_dump"):
+        return value.model_dump(by_alias=True, exclude_none=True, mode="json")
+    if isinstance(value, dict):
+        return {key: jsonable(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [jsonable(item) for item in value]
+    if isinstance(value, tuple):
+        return [jsonable(item) for item in value]
+    if hasattr(value, "value"):
+        return value.value
+    if hasattr(value, "root"):
+        return jsonable(value.root)
+    if hasattr(value, "__dict__"):
+        return {
+            key: jsonable(item)
+            for key, item in vars(value).items()
+            if not key.startswith("_")
+        }
+    return value
+
+
 def _serialize_task(session, task) -> dict:
     pending = None
     if task.request_rpc_id is not None:
@@ -95,9 +117,9 @@ def _tasks_list(session, args: dict) -> str:
     ])
 
 
-def _tasks_pending_schema(session, args: dict) -> str:
+def _tasks_show_pending(session, args: dict) -> str:
     task_id, result_error = require_str(
-        args, "task_id", message="task_id is required for pending_schema"
+        args, "task_id", message="task_id is required for show_pending"
     )
     if result_error is not None:
         return result_error
@@ -106,14 +128,19 @@ def _tasks_pending_schema(session, args: dict) -> str:
     if task is None:
         return error(f"unknown task `{task_id}`")
 
-    has_pending = task.request_rpc_id is not None
-    schema = task.request_schema if task.request_type == "elicitation" else None
+    if task.request_rpc_id is None:
+        return ok(task_id=task_id, pending=None)
+
+    payload = jsonable(task.request_payload or {})
     return ok(
         task_id=task_id,
-        has_pending=has_pending,
-        pending_type=task.request_type if has_pending else None,
-        has_schema=schema is not None,
-        schema=schema,
+        pending={
+            "type": task.request_type,
+            "rpc_id": task.request_rpc_id,
+            "message": payload.get("preview", "") if isinstance(payload, dict) else "",
+            "payload": payload,
+            "schema": jsonable(task.request_schema) if task.request_schema is not None else None,
+        },
     )
 
 
@@ -380,7 +407,7 @@ ACTION_MAPS: dict[str, dict[str, ActionHandler]] = {
     },
     "task": {
         "list": _tasks_list,
-        "pending_schema": _tasks_pending_schema,
+        "show_pending": _tasks_show_pending,
         "archive": _tasks_archive,
     },
     "approval": {

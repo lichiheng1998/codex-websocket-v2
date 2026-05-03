@@ -86,7 +86,7 @@ Task 创建时会固定自己的 `model`、`plan`、`sandbox_policy`、`approval
 | Action | 参数 | 说明 |
 |---|---|---|
 | `list` | `show_threads` | 列出 session task（或服务器全部 thread） |
-| `pending_schema` | `task_id` | 返回 task 当前挂起 MCP elicitation 的 schema（如果有） |
+| `show_pending` | `task_id` | 返回 task 当前挂起请求的详细信息（如果有） |
 | `archive` | `target` | 归档指定 task（`task_id`）、当前 session 全部 task（`all`）或服务器全部 thread（`allthreads`）。若 thread 被其他 session 持有则拒绝。 |
 
 ### `codex_action`
@@ -141,7 +141,7 @@ Task 创建时会固定自己的 `model`、`plan`、`sandbox_policy`、`approval
 /codex approve <task_id>                      — 批准挂起的请求
 /codex approve --all <task_id>                — 批准并本 session 内不再为类似命令弹审批
 /codex deny <task_id>                         — 拒绝挂起的请求
-/codex pending-schema <task_id>               — 查看 task 挂起 elicitation 的 schema
+/codex pending <task_id>                      — 查看 task 挂起请求的详细信息
 /codex archive <task_id>                      — 归档指定 task
 /codex archive --all                          — 归档当前 session 全部 task
 /codex archive --threads                      — 归档服务器全部 thread

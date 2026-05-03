@@ -112,12 +112,12 @@ def _build_parser() -> argparse.ArgumentParser:
     respond_p.add_argument("content_json", nargs="?", default=None,
                            help="JSON object matching the elicitation schema (omit to accept without data)")
 
-    pending_schema_p = sub.add_parser(
-        "pending-schema",
+    pending_p = sub.add_parser(
+        "pending",
         add_help=True,
-        help="show a task's pending elicitation schema",
+        help="show a task's pending request details",
     )
-    pending_schema_p.add_argument("task_id")
+    pending_p.add_argument("task_id")
 
     archive_p = sub.add_parser("archive", add_help=True, help="archive tasks or threads")
     archive_p.add_argument("task_id", nargs="?", help="task_id to archive")
@@ -194,7 +194,7 @@ def _cmd_help() -> str:
         "  `/codex approve --all <task_id>` — approve and stop prompting for similar commands this session\n"
         "  `/codex deny <task_id>` — deny a pending Codex request\n"
         "  `/codex respond <task_id> [json]` — respond to an elicitation with schema data\n"
-        "  `/codex pending-schema <task_id>` — show a task's pending elicitation schema\n"
+        "  `/codex pending <task_id>` — show a task's pending request details\n"
         "  `/codex archive <task_id>` — archive a specific task\n"
         "  `/codex archive --all` — archive all tasks in this session\n"
         "  `/codex archive --threads` — archive every thread on the server\n"
@@ -375,23 +375,29 @@ def _cmd_respond(task_id: str, content_json: str | None) -> str:
     return f"Failed: {result.get('error', 'unknown error')}"
 
 
-def _cmd_pending_schema(task_id: str) -> str:
-    result = _call("codex_tasks", {"action": "pending_schema", "task_id": task_id})
+def _cmd_pending(task_id: str) -> str:
+    result = _call("codex_tasks", {"action": "show_pending", "task_id": task_id})
     if not result.get("ok"):
         return f"Failed: {result.get('error', 'unknown error')}"
 
-    if not result.get("has_pending"):
+    pending = result.get("pending")
+    if not pending:
         return f"Task `{task_id}` has no pending request."
 
-    pending_type = result.get("pending_type") or "unknown"
-    if not result.get("has_schema"):
-        return f"Task `{task_id}` has pending `{pending_type}` but no schema."
-
-    schema_json = json.dumps(result.get("schema"), ensure_ascii=False, indent=2)
-    return (
-        f"Pending schema for task `{task_id}` (`{pending_type}`):\n"
-        f"```json\n{schema_json}\n```"
-    )
+    pending_type = pending.get("type") or "unknown"
+    lines = [f"Pending request for task `{task_id}` (`{pending_type}`):"]
+    message = pending.get("message")
+    if message:
+        lines.append(f"Message: {message}")
+    payload = pending.get("payload")
+    if payload:
+        payload_json = json.dumps(payload, ensure_ascii=False, indent=2)
+        lines.append(f"Payload:\n```json\n{payload_json}\n```")
+    schema = pending.get("schema")
+    if schema:
+        schema_json = json.dumps(schema, ensure_ascii=False, indent=2)
+        lines.append(f"Schema:\n```json\n{schema_json}\n```")
+    return "\n".join(lines)
 
 
 def _cmd_archive(ns: argparse.Namespace) -> str:
@@ -704,8 +710,8 @@ def handle_slash(raw_args: str) -> str:
     if ns.command == "respond":
         return _cmd_respond(ns.task_id, getattr(ns, "content_json", None))
 
-    if ns.command == "pending-schema":
-        return _cmd_pending_schema(ns.task_id)
+    if ns.command == "pending":
+        return _cmd_pending(ns.task_id)
 
     if ns.command == "archive":
         return _cmd_archive(ns)

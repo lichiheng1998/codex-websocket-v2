@@ -86,7 +86,7 @@ List or archive tasks and threads in the current session.
 | Action | Parameters | Description |
 |---|---|---|
 | `list` | `show_threads` | List session tasks (or all server threads) |
-| `pending_schema` | `task_id` | Return the schema for a task's pending MCP elicitation, if any |
+| `show_pending` | `task_id` | Return the current pending request details for a task, if any |
 | `archive` | `target` | Archive a specific task (`task_id`), all session tasks (`all`), or every server thread (`allthreads`). Blocked if the thread is held by another active session. |
 
 ### `codex_action`
@@ -141,7 +141,7 @@ For scoped actions, omit `task_id` to operate on the session default; pass `task
 /codex approve <task_id>                      — approve a pending request
 /codex approve --all <task_id>                — approve and stop prompting for similar commands this session
 /codex deny <task_id>                         — deny a pending request
-/codex pending-schema <task_id>               — show a task's pending elicitation schema
+/codex pending <task_id>                      — show a task's pending request details
 /codex archive <task_id>                      — archive a specific task
 /codex archive --all                          — archive all tasks in this session
 /codex archive --threads                      — archive every thread on the server

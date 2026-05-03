@@ -232,29 +232,134 @@ def test_codex_tasks_rejects_moved_actions() -> None:
         assert result == {"ok": False, "error": f"unknown action {action!r}"}
 
 
-def test_codex_tasks_pending_schema_returns_elicitation_schema() -> None:
+def test_codex_tasks_show_pending_returns_elicitation_details() -> None:
     session, _ = make_elicitation_session()
 
     result = json.loads(dispatch_tool_action(
         "task",
         session,
-        "pending_schema",
+        "show_pending",
         {"task_id": "task-1"},
     ))
 
     assert result == {
         "ok": True,
         "task_id": "task-1",
-        "has_pending": True,
-        "pending_type": "elicitation",
-        "has_schema": True,
-        "schema": {
-            "type": "object",
-            "properties": {
-                "city": {"type": "string"},
-                "days": {"type": "integer"},
+        "pending": {
+            "type": "elicitation",
+            "rpc_id": 99,
+            "message": "Need trip details",
+            "payload": {"preview": "Need trip details", "server": "elicitation_demo"},
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "city": {"type": "string"},
+                    "days": {"type": "integer"},
+                },
+                "required": ["city", "days"],
             },
-            "required": ["city", "days"],
+        },
+    }
+
+
+def test_codex_tasks_show_pending_returns_null_when_none() -> None:
+    session, _ = make_elicitation_session()
+    task = session.tasks["task-1"]
+    task.request_rpc_id = None
+    task.request_type = None
+    task.request_payload = None
+    task.request_schema = None
+
+    result = json.loads(dispatch_tool_action(
+        "task",
+        session,
+        "show_pending",
+        {"task_id": "task-1"},
+    ))
+
+    assert result == {"ok": True, "task_id": "task-1", "pending": None}
+
+
+def test_codex_tasks_show_pending_returns_command_details() -> None:
+    session, _ = make_elicitation_session()
+    task = session.tasks["task-1"]
+    task.request_rpc_id = 42
+    task.request_type = "command"
+    task.request_payload = {
+        "preview": "echo hello",
+        "reason": "test command",
+        "cmd_type": "commandExecution",
+    }
+    task.request_schema = None
+
+    result = json.loads(dispatch_tool_action(
+        "task",
+        session,
+        "show_pending",
+        {"task_id": "task-1"},
+    ))
+
+    assert result == {
+        "ok": True,
+        "task_id": "task-1",
+        "pending": {
+            "type": "command",
+            "rpc_id": 42,
+            "message": "echo hello",
+            "payload": {
+                "preview": "echo hello",
+                "reason": "test command",
+                "cmd_type": "commandExecution",
+            },
+            "schema": None,
+        },
+    }
+
+
+def test_codex_tasks_show_pending_returns_input_details() -> None:
+    session, _ = make_elicitation_session()
+    task = session.tasks["task-1"]
+    task.request_rpc_id = 43
+    task.request_type = "input"
+    task.request_payload = {
+        "preview": "Choose one",
+        "questions": [
+            {
+                "id": "q1",
+                "header": "Choice",
+                "question": "Choose one",
+                "options": [{"label": "yes", "description": "Continue"}],
+            }
+        ],
+    }
+    task.request_schema = None
+
+    result = json.loads(dispatch_tool_action(
+        "task",
+        session,
+        "show_pending",
+        {"task_id": "task-1"},
+    ))
+
+    assert result == {
+        "ok": True,
+        "task_id": "task-1",
+        "pending": {
+            "type": "input",
+            "rpc_id": 43,
+            "message": "Choose one",
+            "payload": {
+                "preview": "Choose one",
+                "questions": [
+                    {
+                        "id": "q1",
+                        "header": "Choice",
+                        "question": "Choose one",
+                        "options": [{"label": "yes", "description": "Continue"}],
+                    }
+                ],
+            },
+            "schema": None,
         },
     }
 
@@ -273,7 +378,7 @@ def test_slash_commands_route_to_split_tools() -> None:
     commands.handle_slash("respond task-1 '{\"city\":\"Shanghai\"}'")
     commands.handle_slash("reply task-1 hello")
     commands.handle_slash("answer task-1 yes")
-    commands.handle_slash("pending-schema task-1")
+    commands.handle_slash("pending task-1")
     commands.handle_slash("archive task-1")
 
     assert [tool_name for tool_name, _ in calls] == [
@@ -287,5 +392,5 @@ def test_slash_commands_route_to_split_tools() -> None:
     ]
     assert calls[-2] == (
         "codex_tasks",
-        {"action": "pending_schema", "task_id": "task-1"},
+        {"action": "show_pending", "task_id": "task-1"},
     )
