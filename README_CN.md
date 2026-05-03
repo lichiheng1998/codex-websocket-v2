@@ -19,9 +19,9 @@ hermes session
     │
     ├── CodexSession（每 session 一个）  ← 独立 WS + event loop + task 表 + 配置
     │       │
-    │       └── CodexBridge             ← WebSocket 上的 JSON-RPC
+    │       └── CodexBridge             ← server lease + WebSocket 上的 JSON-RPC
     │               │
-    ├── CodexServerManager（进程级）     ← 引用计数管理 codex app-server 子进程
+    │       └── CodexServerManager      ← 引用计数管理 codex app-server 子进程
     │
     └── codex app-server                ← 本地子进程，跨 session 共享
 ```
@@ -171,10 +171,10 @@ Task 创建时会固定自己的 `model`、`plan`、`sandbox_policy`、`approval
 | 模块 | 职责 |
 |---|---|
 | `__init__.py` | 插件注册，捕获主 event loop |
-| `session.py` | `CodexSession` — per-session 核心（task、配置、WS 生命周期） |
+| `session.py` | `CodexSession` — per-session 核心（task 和配置） |
 | `session_registry.py` | 全局 `{ platform:chat_id → CodexSession }` 注册表 |
-| `bridge.py` | `CodexBridge` — WebSocket 连接 + JSON-RPC 请求/响应配对 |
-| `server_manager.py` | `CodexServerManager` — 引用计数管理 app-server 子进程 |
+| `transport/bridge.py` | `CodexBridge` — server lease、WebSocket 连接、JSON-RPC 请求/响应配对 |
+| `transport/server_manager.py` | `CodexServerManager` — 引用计数管理 app-server 子进程 |
 | `handlers.py` | `MessageHandler` — 入站帧分发到 session 回调 |
 | `state.py` | `Task`、`TaskTarget` 数据类 |
 | `notify.py` | 跨 loop 平台通知 + session 记录镜像 |

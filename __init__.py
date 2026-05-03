@@ -96,7 +96,7 @@ def register(ctx) -> None:
 
 def _shutdown_all() -> None:
     from .codex_websocket_v2.core import session_registry
-    from .codex_websocket_v2.core.server_manager import CodexServerManager
+    from .codex_websocket_v2.transport.server_manager import CodexServerManager
 
     for session in session_registry.all_sessions():
         try:

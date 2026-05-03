@@ -16,8 +16,10 @@ from .models import (
     ApprovalRequestedEvent,
     ElicitationRequestedEvent,
     ItemCompletedEvent,
+    ItemStartedEvent,
     RpcErrorEvent,
     RpcResponseEvent,
+    ServerRequestResolvedEvent,
     TurnCompletedEvent,
     UnknownFrameEvent,
     UnknownNotificationEvent,
@@ -103,6 +105,21 @@ class EventFactory:
     def _notification_event(self, notif: Any, raw: dict) -> Any:
         method = notif.method.value
         params = notif.params
+        if method == "item/started":
+            thread_id = getattr(params, "threadId", None)
+            task, _ = self._task_meta(thread_id)
+            item = params.item.root
+            item_type = getattr(getattr(item, "type", None), "value", None) or getattr(item, "type", "")
+            return ItemStartedEvent(
+                session=self.session,
+                raw=raw,
+                method=method,
+                params=params,
+                thread_id=thread_id,
+                task=task,
+                item=item,
+                item_type=item_type,
+            )
         if method == "item/completed":
             thread_id = getattr(params, "threadId", None)
             task, _ = self._task_meta(thread_id)
@@ -132,6 +149,14 @@ class EventFactory:
                 task=task,
                 turn=turn,
                 status=status,
+            )
+        if method == "serverRequest/resolved":
+            return ServerRequestResolvedEvent(
+                session=self.session,
+                raw=raw,
+                method=method,
+                params=params,
+                request_id=getattr(params, "requestId", None),
             )
         return UnknownNotificationEvent(session=self.session, raw=raw, method=method, params=params)
 

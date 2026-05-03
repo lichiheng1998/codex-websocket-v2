@@ -23,6 +23,17 @@ def _resolve_session_or_error():
         return None, _error(f"hermes runtime unavailable: {exc}")
 
 
+def _dispatch_action_tool(map_name: str, args: dict) -> str:
+    action = (args.get("action") or "").strip()
+    if not action:
+        return _error("action is required")
+
+    session, error = _resolve_session_or_error()
+    if error is not None:
+        return error
+    return dispatch_tool_action(map_name, session, action, args)
+
+
 def codex_task(args: dict, **kwargs: Any) -> str:
     cwd = args.get("cwd", "")
     prompt = args.get("prompt", "")
@@ -78,58 +89,23 @@ def codex_task(args: dict, **kwargs: Any) -> str:
 
 
 def codex_tasks(args: dict, **kwargs: Any) -> str:
-    action = (args.get("action") or "").strip()
-    if not action:
-        return _error("action is required")
-
-    session, error = _resolve_session_or_error()
-    if error is not None:
-        return error
-    return dispatch_tool_action("task", session, action, args)
+    return _dispatch_action_tool("task", args)
 
 
 def codex_approval(args: dict, **kwargs: Any) -> str:
-    action = (args.get("action") or "").strip()
-    if not action:
-        return _error("action is required")
-
-    session, error = _resolve_session_or_error()
-    if error is not None:
-        return error
-    return dispatch_tool_action("approval", session, action, args)
+    return _dispatch_action_tool("approval", args)
 
 
 def codex_action(args: dict, **kwargs: Any) -> str:
-    action = (args.get("action") or "").strip()
-    if not action:
-        return _error("action is required")
-
-    session, error = _resolve_session_or_error()
-    if error is not None:
-        return error
-    return dispatch_tool_action("action", session, action, args)
+    return _dispatch_action_tool("action", args)
 
 
 def codex_models(args: dict, **kwargs: Any) -> str:
-    action = (args.get("action") or "").strip()
-    if not action:
-        return _error("action is required")
-
-    session, error = _resolve_session_or_error()
-    if error is not None:
-        return error
-    return dispatch_tool_action("model", session, action, args)
+    return _dispatch_action_tool("model", args)
 
 
 def codex_session(args: dict, **kwargs: Any) -> str:
-    action = (args.get("action") or "").strip()
-    if not action:
-        return _error("action is required")
-
-    session, error = _resolve_session_or_error()
-    if error is not None:
-        return error
-    return dispatch_tool_action("session", session, action, args)
+    return _dispatch_action_tool("session", args)
 
 
 def codex_revive(args: dict, **kwargs: Any) -> str:

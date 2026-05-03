@@ -12,8 +12,10 @@ from ..models import (
     ApprovalRequestedEvent,
     ElicitationRequestedEvent,
     ItemCompletedEvent,
+    ItemStartedEvent,
     RpcErrorEvent,
     RpcResponseEvent,
+    ServerRequestResolvedEvent,
     TurnCompletedEvent,
     UnknownFrameEvent,
     UnknownNotificationEvent,
@@ -30,8 +32,10 @@ def register_default_subscribers(bus, session) -> None:
     bus.subscribe(ElicitationRequestedEvent, ElicitationSubscriber(session))
 
     notification = NotificationSubscriber(session)
+    bus.subscribe(ItemStartedEvent, notification)
     bus.subscribe(ItemCompletedEvent, notification)
     bus.subscribe(TurnCompletedEvent, notification)
+    bus.subscribe(ServerRequestResolvedEvent, notification)
 
     bus.subscribe(UnknownRequestEvent, UnhandledRequestSubscriber(session))
     bus.subscribe(UnknownNotificationEvent, UnhandledNotificationSubscriber())

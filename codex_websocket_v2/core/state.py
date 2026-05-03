@@ -60,3 +60,7 @@ class Task:
     # Buffer for "off" verbose level — holds the most recent item, flushed at turn/completed.
     last_item: Any = None
     last_item_type: str = ""
+
+    # Started items keyed by app-server item id. File-change approvals refer
+    # back to these by itemId before item/completed arrives.
+    started_items: Dict[str, Any] = field(default_factory=dict)

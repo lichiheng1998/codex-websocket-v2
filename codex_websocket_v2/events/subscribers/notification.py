@@ -5,7 +5,12 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from ..models import ItemCompletedEvent, TurnCompletedEvent
+from ..models import (
+    ItemCompletedEvent,
+    ItemStartedEvent,
+    ServerRequestResolvedEvent,
+    TurnCompletedEvent,
+)
 
 if TYPE_CHECKING:
     from ...core.session import CodexSession
@@ -31,7 +36,14 @@ class NotificationSubscriber:
             "contextCompaction": self._context_compaction,
         }
 
-    async def __call__(self, event: ItemCompletedEvent | TurnCompletedEvent) -> bool:
+    async def __call__(
+        self,
+        event: ItemStartedEvent | ItemCompletedEvent | TurnCompletedEvent | ServerRequestResolvedEvent,
+    ) -> bool:
+        if isinstance(event, ItemStartedEvent):
+            if event.task is not None:
+                self._item_started(event)
+            return True
         if isinstance(event, ItemCompletedEvent):
             if event.task is not None:
                 await self._safe(self._item_completed(event))
@@ -39,6 +51,9 @@ class NotificationSubscriber:
         if isinstance(event, TurnCompletedEvent):
             if event.task is not None:
                 await self._safe(self._turn_completed(event))
+            return True
+        if isinstance(event, ServerRequestResolvedEvent):
+            await self._safe(self._server_request_resolved(event))
             return True
         return False
 
@@ -49,10 +64,18 @@ class NotificationSubscriber:
         except Exception as exc:
             logger.warning("codex handler task failed: %s", exc)
 
+    def _item_started(self, event: ItemStartedEvent) -> None:
+        item_id = getattr(event.item, "id", None)
+        if item_id:
+            event.task.started_items[item_id] = event.item
+
     async def _item_completed(self, event: ItemCompletedEvent) -> None:
         task = event.task
         item = event.item
         item_type = event.item_type
+        item_id = getattr(item, "id", None)
+        if item_id:
+            task.started_items.pop(item_id, None)
         level = self.session.verbose
 
         task.last_item = item
@@ -154,6 +177,31 @@ class NotificationSubscriber:
                 f"Continue: `/codex reply {task.task_id} <message>`",
             )
 
+    async def _server_request_resolved(self, event: ServerRequestResolvedEvent) -> None:
+        request_id = event.request_id
+        task = self._task_for_request_id(request_id)
+        if task is None:
+            logger.debug("codex handler: resolved unknown server request %r", request_id)
+            return
+
+        request_type = task.request_type or "request"
+        preview = (task.request_payload or {}).get("preview", "")
+        task.request_rpc_id = None
+        task.request_type = None
+        task.request_payload = None
+        task.request_schema = None
+
+        message = f"✅ Codex task `{task.task_id}` {request_type} request resolved"
+        if preview:
+            message += f": {preview}"
+        await self.session.notify(message)
+
+    def _task_for_request_id(self, request_id: Any) -> "Task | None":
+        for task in self.session.tasks.values():
+            if _same_request_id(task.request_rpc_id, request_id):
+                return task
+        return None
+
     async def _show_last_item(self, task: "Task") -> None:
         item = task.last_item
         item_type = task.last_item_type
@@ -164,3 +212,13 @@ class NotificationSubscriber:
             await handler(task, item)
         else:
             logger.debug("codex handler: last item type %r ignored", item_type)
+
+
+def _same_request_id(left: Any, right: Any) -> bool:
+    if left == right:
+        return True
+    left_root = getattr(left, "root", left)
+    right_root = getattr(right, "root", right)
+    if left_root == right_root:
+        return True
+    return str(left_root) == str(right_root)

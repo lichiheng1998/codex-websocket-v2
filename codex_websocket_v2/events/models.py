@@ -71,6 +71,14 @@ class ServerNotificationEvent(BaseEvent):
 
 
 @dataclass
+class ItemStartedEvent(ServerNotificationEvent):
+    thread_id: Optional[str] = None
+    task: Any = None
+    item: Any = None
+    item_type: str = ""
+
+
+@dataclass
 class ItemCompletedEvent(ServerNotificationEvent):
     thread_id: Optional[str] = None
     task: Any = None
@@ -84,6 +92,11 @@ class TurnCompletedEvent(ServerNotificationEvent):
     task: Any = None
     turn: Any = None
     status: str = ""
+
+
+@dataclass
+class ServerRequestResolvedEvent(ServerNotificationEvent):
+    request_id: Any = None
 
 
 @dataclass

@@ -7,7 +7,10 @@ from types import SimpleNamespace
 from codex_websocket_v2.core.session import CodexSession
 from codex_websocket_v2.core.state import Task, TaskTarget
 from codex_websocket_v2.events.factory import EventFactory
+from codex_websocket_v2.events.models import ItemCompletedEvent, ItemStartedEvent, ServerRequestResolvedEvent
+from codex_websocket_v2.events.subscribers.approval import ApprovalRequestSubscriber
 from codex_websocket_v2.events.subscribers.elicitation import ElicitationSubscriber
+from codex_websocket_v2.events.subscribers.notification import NotificationSubscriber
 from codex_websocket_v2.surfaces import commands
 from codex_websocket_v2.surfaces.tool_actions import dispatch_tool_action
 
@@ -36,6 +39,7 @@ class FakeSession:
             request_type=None,
             request_payload=None,
             request_schema=None,
+            started_items={},
         )
         self.notifications: list[str] = []
 
@@ -127,6 +131,138 @@ def test_elicitation_subscriber_treats_empty_schema_as_confirmation() -> None:
     assert "/codex respond task-1" not in notification
     assert "/codex approve task-1" in notification
     assert "/codex deny task-1" in notification
+
+
+def test_file_change_approval_lists_file_changes_from_started_item() -> None:
+    session = FakeSession()
+    session.task.started_items = {
+        "item-1": SimpleNamespace(
+            id="item-1",
+            type=SimpleNamespace(value="fileChange"),
+            changes=[
+                SimpleNamespace(path="src/app.py", kind=SimpleNamespace(value="update"), diff="-old\n+new"),
+                SimpleNamespace(path="README.md", kind=SimpleNamespace(value="create"), diff="new file"),
+            ],
+        )
+    }
+    params = SimpleNamespace(
+        threadId="thread-1",
+        itemId="item-1",
+        reason="Need to update files",
+        grantRoot="/work/repo",
+    )
+
+    asyncio.run(ApprovalRequestSubscriber(session)._handle_file_change_approval(params, 9))
+
+    notification = session.notifications[0]
+    assert "`src/app.py`" in notification
+    assert "`README.md`" in notification
+    assert "Need to update files" in notification
+    assert session.task.request_payload["preview"] == "src/app.py, README.md"
+    assert session.task.request_payload["started_item"]["changes"][0]["diff"] == "-old\n+new"
+
+
+def test_command_approval_prefers_command_from_started_item() -> None:
+    session = FakeSession()
+    session.task.started_items = {
+        "cmd-1": SimpleNamespace(
+            id="cmd-1",
+            type=SimpleNamespace(value="commandExecution"),
+            command="pytest tests/test_app.py",
+            cwd=SimpleNamespace(root="/work/repo"),
+            commandActions=[
+                SimpleNamespace(root=SimpleNamespace(type=SimpleNamespace(value="search"), query="test_app")),
+            ],
+        )
+    }
+    params = SimpleNamespace(
+        threadId="thread-1",
+        itemId="cmd-1",
+        approvalId="approval-1",
+        reason="Run focused tests",
+        command=None,
+    )
+
+    asyncio.run(ApprovalRequestSubscriber(session)._handle_command_approval(params, 11, "commandExecution"))
+
+    notification = session.notifications[0]
+    assert "pytest tests/test_app.py" in notification
+    assert "cwd: `/work/repo`" in notification
+    assert "Actions:" in notification
+    assert "Item: `cmd-1`" in notification
+    assert "Approval: `approval-1`" in notification
+    assert session.task.request_payload["preview"] == "pytest tests/test_app.py"
+    assert session.task.request_payload["started_item"]["command"] == "pytest tests/test_app.py"
+
+
+def test_command_approval_shows_network_only_context() -> None:
+    session = FakeSession()
+    params = SimpleNamespace(
+        threadId="thread-1",
+        itemId="cmd-2",
+        reason="Allow network",
+        command=None,
+        networkApprovalContext=SimpleNamespace(protocol=SimpleNamespace(value="https"), host="example.com"),
+        additionalPermissions=SimpleNamespace(network=SimpleNamespace(enabled=True)),
+    )
+
+    asyncio.run(ApprovalRequestSubscriber(session)._handle_command_approval(params, 12, "commandExecution"))
+
+    notification = session.notifications[0]
+    assert "(codex command)" in notification
+    assert "Additional permissions: network access" in notification
+    assert "Network request: `https://example.com`" in notification
+    assert session.task.request_payload["network_approval_context"]["host"] == "example.com"
+
+
+def test_file_change_approval_mentions_missing_file_list_and_item_id() -> None:
+    session = FakeSession()
+    params = SimpleNamespace(
+        threadId="thread-1",
+        itemId="item-1",
+        reason="Need write access",
+        grantRoot=None,
+    )
+
+    asyncio.run(ApprovalRequestSubscriber(session)._handle_file_change_approval(params, 10))
+
+    notification = session.notifications[0]
+    assert "Files: not found in the preceding item/started" in notification
+    assert "Item: `item-1`" in notification
+    assert session.task.request_payload["preview"] == "write permission — item-1"
+    assert session.task.request_payload["item_id"] == "item-1"
+
+
+def test_notification_subscriber_caches_started_items_until_completed() -> None:
+    session = FakeSession()
+    item = SimpleNamespace(id="item-1", type=SimpleNamespace(value="fileChange"), changes=[])
+    subscriber = NotificationSubscriber(session)
+
+    asyncio.run(subscriber(ItemStartedEvent(session=session, raw={}, task=session.task, item=item, item_type="fileChange")))
+
+    assert session.task.started_items["item-1"] is item
+
+    asyncio.run(subscriber(ItemCompletedEvent(session=session, raw={}, task=session.task, item=item, item_type="fileChange")))
+
+    assert "item-1" not in session.task.started_items
+
+
+def test_server_request_resolved_clears_pending_request_and_notifies() -> None:
+    session = FakeSession()
+    session.tasks = {"task-1": session.task}
+    session.task.request_rpc_id = 10
+    session.task.request_type = "command"
+    session.task.request_payload = {"preview": "src/app.py"}
+    session.task.request_schema = {"type": "object"}
+    subscriber = NotificationSubscriber(session)
+
+    asyncio.run(subscriber(ServerRequestResolvedEvent(session=session, raw={}, request_id=10)))
+
+    assert session.task.request_rpc_id is None
+    assert session.task.request_type is None
+    assert session.task.request_payload is None
+    assert session.task.request_schema is None
+    assert "request resolved: src/app.py" in session.notifications[0]
 
 
 def make_elicitation_session() -> tuple[CodexSession, FakeBridge]:

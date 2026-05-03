@@ -8,6 +8,7 @@ ref-counts the sessions: the first ``acquire()`` spawns the process, the last
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import logging
 import os
 import socket
@@ -16,11 +17,24 @@ import threading
 import time
 from typing import ClassVar, Optional
 
-from .policies import PORT_PROBE_TIMEOUT, SHUTDOWN_TIMEOUT, STARTUP_TIMEOUT
-from .state import Result, err, ok
-from .utils import pick_free_port
+from ..core.policies import PORT_PROBE_TIMEOUT, SHUTDOWN_TIMEOUT, STARTUP_TIMEOUT
+from ..core.state import Result, err, ok
+from ..core.utils import pick_free_port
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ServerLease:
+    manager: "CodexServerManager"
+    port: int
+    closed: bool = False
+
+    def close(self) -> None:
+        if self.closed:
+            return
+        self.closed = True
+        self.manager.release()
 
 
 class CodexServerManager:
@@ -57,6 +71,13 @@ class CodexServerManager:
                 return spawn
             self._ref_count = 1
             return ok(port=self.port)
+
+    def acquire_lease(self) -> Result:
+        """Acquire a closeable app-server lease for one bridge."""
+        acquired = self.acquire()
+        if not acquired["ok"]:
+            return acquired
+        return ok(lease=ServerLease(self, acquired["port"]))
 
     def release(self) -> None:
         """Decrement ref count; terminate the subprocess on the last release."""

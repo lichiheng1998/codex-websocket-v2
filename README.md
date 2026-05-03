@@ -19,9 +19,9 @@ hermes session
     │
     ├── CodexSession (per-session)      ← isolated WS + event loop + task list + config
     │       │
-    │       └── CodexBridge             ← JSON-RPC over WebSocket
+    │       └── CodexBridge             ← server lease + JSON-RPC over WebSocket
     │               │
-    ├── CodexServerManager (process)    ← ref-counted codex app-server subprocess
+    │       └── CodexServerManager      ← ref-counted codex app-server subprocess
     │
     └── codex app-server                ← local process, shared across sessions
 ```
@@ -171,10 +171,10 @@ For scoped actions, omit `task_id` to operate on the session default; pass `task
 | Module | Role |
 |---|---|
 | `__init__.py` | Plugin registration, main event loop capture |
-| `session.py` | `CodexSession` — per-session core (tasks, config, WS lifecycle) |
+| `session.py` | `CodexSession` — per-session core (tasks and config) |
 | `session_registry.py` | Global `{ platform:chat_id → CodexSession }` registry |
-| `bridge.py` | `CodexBridge` — WebSocket connection + JSON-RPC pairing |
-| `server_manager.py` | `CodexServerManager` — ref-counted app-server subprocess |
+| `transport/bridge.py` | `CodexBridge` — server lease, WebSocket connection, JSON-RPC pairing |
+| `transport/server_manager.py` | `CodexServerManager` — ref-counted app-server subprocess |
 | `handlers.py` | `MessageHandler` — inbound frame dispatch → session callbacks |
 | `state.py` | `Task`, `TaskTarget` dataclasses |
 | `notify.py` | Cross-loop platform notification + session transcript mirroring |

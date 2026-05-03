@@ -1,9 +1,9 @@
 """CodexSession — per-hermes-session state and orchestration.
 
 One ``CodexSession`` per hermes session_key. Owns:
-  * its own WebSocket via ``self.bridge`` (independent connection + loop)
   * its own task list (``self.tasks: Dict[task_id, Task]``)
   * per-session config (default_model, mode, verbose)
+  * one long-lived ``CodexBridge`` used for app-server RPC transport
 
 Inbound frames flow through ``MessageHandler`` (``handlers.py``); the handler
 mutates session state through three narrow setters:
@@ -13,8 +13,8 @@ mutates session state through three narrow setters:
      server→client request on the task
   * ``notify(text)`` — push a user-visible message via ``self.target``
 
-The CodexServerManager (process-level) is shared across sessions; the bridge
-is exclusive to this session.
+The bridge owns the app-server lease and WebSocket lifecycle; the session owns
+business state and uses the bridge for transport.
 """
 
 from __future__ import annotations
@@ -47,7 +47,6 @@ from .provider import (
     list_models_for,
     sync_default_model,
 )
-from .server_manager import CodexServerManager
 from .state import Result, Task, TaskTarget, err, ok
 from .utils import extract_thread_id, new_task_id
 
@@ -71,50 +70,36 @@ class CodexSession:
 
         register_default_subscribers(self.event_bus, self)
 
-        self._server = CodexServerManager.instance()
-        self.bridge: Optional[CodexBridge] = None
-        self._ready = threading.Event()
+        self.bridge: CodexBridge = CodexBridge(session=self)
         self._start_lock = threading.Lock()
 
     # ── Lifecycle ────────────────────────────────────────────────────────────
 
     def ensure_started(self) -> Result:
-        if self._ready.is_set():
+        if self.bridge.is_connected():
             return ok()
         with self._start_lock:
-            if self._ready.is_set():
+            if self.bridge.is_connected():
                 return ok()
 
-            acquired = self._server.acquire()
-            if not acquired["ok"]:
-                return acquired
-            port = acquired["port"]
-
-            self.bridge = CodexBridge(port=port, session=self)
-            connect = self.bridge.connect()
+            connect = self.bridge.ensure_connected()
             if not connect["ok"]:
-                self._server.release()
-                self.bridge = None
                 return connect
 
-            sync = self.bridge.run_sync(self._sync_config_from_server(), timeout=STARTUP_TIMEOUT)
-            if sync["ok"]:
-                self.default_model = sync["model"]
-            else:
-                logger.warning("codex session: failed to sync default model: %s", sync["error"])
+            if connect.get("connected"):
+                sync = self.bridge.run_sync(self._sync_config_from_server(), timeout=STARTUP_TIMEOUT)
+                if sync["ok"]:
+                    self.default_model = sync["model"]
+                else:
+                    logger.warning("codex session: failed to sync default model: %s", sync["error"])
 
-            self._ready.set()
             return ok()
 
     def shutdown(self) -> None:
-        if self.bridge is not None:
-            try:
-                self.bridge.disconnect()
-            except Exception:
-                pass
-            self.bridge = None
-        self._server.release()
-        self._ready.clear()
+        try:
+            self.bridge.close()
+        except Exception:
+            pass
 
     async def _sync_config_from_server(self) -> Result:
         result, provider = await sync_default_model(self.bridge.rpc)

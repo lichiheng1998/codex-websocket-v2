@@ -1,1 +1,1 @@
-"""Core session state and app-server management."""
+"""Core session state and business orchestration."""
