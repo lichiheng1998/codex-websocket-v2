@@ -318,9 +318,11 @@ def test_codex_action_respond_sends_content_not_schema() -> None:
         "id": 99,
         "result": {"action": "accept", "content": content},
     }
-    assert session.tasks["task-1"].request_rpc_id is None
-    assert session.tasks["task-1"].request_type is None
-    assert session.tasks["task-1"].request_schema is None
+    assert session.tasks["task-1"].request_rpc_id == 99
+    assert session.tasks["task-1"].request_type == "elicitation"
+    assert session.tasks["task-1"].request_schema is not None
+    assert session.tasks["task-1"].request_payload["response_sent"] is True
+    assert session.tasks["task-1"].request_payload["decision"] == "respond"
 
 
 def test_codex_approval_approve_accepts_elicitation_with_empty_content() -> None:
@@ -338,9 +340,11 @@ def test_codex_approval_approve_accepts_elicitation_with_empty_content() -> None
         "id": 99,
         "result": {"action": "accept", "content": {}},
     }
-    assert session.tasks["task-1"].request_rpc_id is None
-    assert session.tasks["task-1"].request_type is None
-    assert session.tasks["task-1"].request_schema is None
+    assert session.tasks["task-1"].request_rpc_id == 99
+    assert session.tasks["task-1"].request_type == "elicitation"
+    assert session.tasks["task-1"].request_schema is not None
+    assert session.tasks["task-1"].request_payload["response_sent"] is True
+    assert session.tasks["task-1"].request_payload["decision"] == "accept"
 
 
 def test_codex_approval_deny_declines_elicitation() -> None:

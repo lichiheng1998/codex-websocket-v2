@@ -434,10 +434,9 @@ class CodexSession:
         if not send["ok"]:
             return send
 
-        task.request_rpc_id = None
-        task.request_type = None
-        task.request_payload = None
-        task.request_schema = None
+        if task.request_payload is not None:
+            task.request_payload["response_sent"] = True
+            task.request_payload["decision"] = decision
         return ok(decision=decision)
 
     def respond_task(self, task_id: str, content: "dict | None" = None) -> Result:
@@ -465,10 +464,9 @@ class CodexSession:
         if not send["ok"]:
             return send
 
-        task.request_rpc_id = None
-        task.request_type = None
-        task.request_payload = None
-        task.request_schema = None
+        if task.request_payload is not None:
+            task.request_payload["response_sent"] = True
+            task.request_payload["decision"] = "respond"
         return ok(task_id=task_id, decision="respond")
 
     def decline_task(self, task_id: str) -> Result:
@@ -491,10 +489,9 @@ class CodexSession:
         if not send["ok"]:
             return send
 
-        task.request_rpc_id = None
-        task.request_type = None
-        task.request_payload = None
-        task.request_schema = None
+        if task.request_payload is not None:
+            task.request_payload["response_sent"] = True
+            task.request_payload["decision"] = "decline"
         return ok(task_id=task_id, decision="decline")
 
     def input_task(
@@ -568,9 +565,9 @@ class CodexSession:
         if not send["ok"]:
             return send
 
-        task.request_rpc_id = None
-        task.request_type = None
-        task.request_payload = None
+        if task.request_payload is not None:
+            task.request_payload["response_sent"] = True
+            task.request_payload["decision"] = "answer"
         return ok(task_id=task_id)
 
     def list_pending_requests(self) -> list:
