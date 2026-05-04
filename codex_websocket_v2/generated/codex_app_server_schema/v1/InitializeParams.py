@@ -17,7 +17,7 @@ class InitializeCapabilities(BaseModel):
     experimentalApi: bool | None = Field(
         False, description='Opt into receiving experimental API methods and fields.'
     )
-    optOutNotificationMethods: list[str] | None = Field(
+    optOuts: list[str] | None = Field(
         None,
         description='Exact notification method names that should be suppressed for this connection (for example `thread/started`).',
     )
