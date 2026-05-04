@@ -49,6 +49,8 @@ def _debug_stack(limit: int = 8) -> str:
 def set_main_loop(loop: Optional[asyncio.AbstractEventLoop]) -> None:
     """Record the hermes tool/gateway event loop."""
     global _MAIN_LOOP
+    if loop is None:
+        return
     _MAIN_LOOP = loop
 
 
@@ -57,6 +59,8 @@ def capture_current_loop(reason: str = "") -> None:
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
+        return
+    if _MAIN_LOOP is not None:
         return
     set_main_loop(loop)
     logger.info(
@@ -68,30 +72,25 @@ def capture_current_loop(reason: str = "") -> None:
 
 
 async def _send_via_main_loop(coro_factory) -> None:
-    """Schedule ``coro_factory()`` on the hermes main loop and await its result.
-
-    If the current loop *is* the main loop (or no main loop was captured),
-    falls through to a direct ``await coro_factory()``.
-    """
+    """Schedule ``coro_factory()`` on the hermes main loop and await its result."""
     try:
         current = asyncio.get_running_loop()
     except RuntimeError:
         current = None
 
-    if _MAIN_LOOP is None or current is _MAIN_LOOP or not _MAIN_LOOP.is_running():
-        logger.info(
-            "codex notify: direct send "
-            "(main_loop_set=%s, on_main_loop=%s, main_loop_running=%s)",
-            _MAIN_LOOP is not None,
-            current is _MAIN_LOOP if _MAIN_LOOP is not None else None,
-            _MAIN_LOOP.is_running() if _MAIN_LOOP is not None else None,
-        )
-        return await coro_factory()
+    if _MAIN_LOOP is not None and current is not _MAIN_LOOP and _MAIN_LOOP.is_running():
+        logger.info("codex notify: dispatching to main loop via run_coroutine_threadsafe")
+        future = asyncio.run_coroutine_threadsafe(coro_factory(), _MAIN_LOOP)
+        return await asyncio.wrap_future(future)
 
-    logger.info("codex notify: dispatching to main loop via run_coroutine_threadsafe")
-    future = asyncio.run_coroutine_threadsafe(coro_factory(), _MAIN_LOOP)
-    # wrap_future bridges the concurrent.futures.Future to the calling loop.
-    return await asyncio.wrap_future(future)
+    logger.info(
+        "codex notify: direct send "
+        "(main_loop_set=%s, on_main_loop=%s, main_loop_running=%s)",
+        _MAIN_LOOP is not None,
+        current is _MAIN_LOOP if _MAIN_LOOP is not None else None,
+        _MAIN_LOOP.is_running() if _MAIN_LOOP is not None else None,
+    )
+    return await coro_factory()
 
 
 async def _send_telegram_direct(pconfig, chat_id: str, message: str, thread_id: Optional[str]) -> None:
@@ -145,6 +144,56 @@ async def _send_telegram_direct(pconfig, chat_id: str, message: str, thread_id: 
                 )
     except Exception as exc:
         logger.warning("codex notify: direct Telegram send failed: %s", exc)
+
+
+async def _deliver_notify_on_gateway(target: TaskTarget, message: str) -> None:
+    try:
+        from gateway.config import load_gateway_config, Platform
+        from tools.send_message_tool import _send_to_platform
+
+        platform_map = {
+            "telegram": Platform.TELEGRAM, "discord": Platform.DISCORD,
+            "slack": Platform.SLACK, "whatsapp": Platform.WHATSAPP,
+            "signal": Platform.SIGNAL, "bluebubbles": Platform.BLUEBUBBLES,
+            "qqbot": Platform.QQBOT, "matrix": Platform.MATRIX,
+            "mattermost": Platform.MATTERMOST,
+            "homeassistant": Platform.HOMEASSISTANT,
+            "dingtalk": Platform.DINGTALK, "feishu": Platform.FEISHU,
+            "wecom": Platform.WECOM, "weixin": Platform.WEIXIN,
+            "email": Platform.EMAIL, "sms": Platform.SMS,
+        }
+        platform = platform_map.get(target.platform.lower())
+        if platform is None:
+            logger.warning("codex notify: unknown platform %r", target.platform)
+            return
+
+        cfg = load_gateway_config()
+        pconfig = cfg.platforms.get(platform)
+        if pconfig is None:
+            logger.warning("codex notify: platform %s not configured", platform)
+            return
+
+        thread_id = target.thread_id or None
+        if platform == Platform.TELEGRAM:
+            await _send_telegram_direct(pconfig, target.chat_id, message, thread_id)
+        else:
+            await _send_to_platform(
+                platform, pconfig, target.chat_id, message, thread_id=thread_id,
+            )
+
+        try:
+            from gateway.mirror import mirror_to_session
+            mirror_to_session(
+                platform=target.platform,
+                chat_id=str(target.chat_id),
+                message_text=message,
+                source_label="codex",
+                thread_id=thread_id,
+            )
+        except Exception as mirror_exc:
+            logger.debug("codex notify: mirror skipped: %s", mirror_exc)
+    except Exception as exc:
+        logger.warning("codex notify failed: %s", exc)
 
 
 async def notify_user(target: Optional[TaskTarget], message: str) -> None:

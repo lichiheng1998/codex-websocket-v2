@@ -28,7 +28,7 @@ def register(ctx) -> None:
     try:
         notify.set_main_loop(asyncio.get_running_loop())
     except RuntimeError:
-        notify.set_main_loop(None)
+        pass
 
     def _capture_loop_before_codex_tool(**kwargs) -> None:
         tool_name = str(kwargs.get("tool_name") or "")
