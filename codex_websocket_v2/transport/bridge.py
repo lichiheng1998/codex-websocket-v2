@@ -52,6 +52,10 @@ class CodexBridge:
         self._connect_lock = threading.Lock()
         self._pending_rpc: Dict[int, asyncio.Future] = {}
         self._handler = None  # set in connect()
+        self._event_queue: Optional[asyncio.Queue] = None
+        self._reader_task: Optional[asyncio.Task] = None
+        self._consumer_task: Optional[asyncio.Task] = None
+        self._queue_size = 2048
         self._closed = threading.Event()
         self._closed_reason = ""
 
@@ -104,6 +108,7 @@ class CodexBridge:
         self._mark_closed("disconnect requested")
         self._fail_pending_rpcs("websocket disconnected")
         if self.loop and self.loop.is_running():
+            self.run_sync(self._shutdown_workers(), timeout=SHUTDOWN_TIMEOUT)
             self.run_sync(self._close_ws(), timeout=SHUTDOWN_TIMEOUT)
             self.loop.call_soon_threadsafe(self.loop.stop)
         if self.loop_thread is not None:
@@ -112,6 +117,9 @@ class CodexBridge:
         self.loop = None
         self.loop_thread = None
         self._handler = None
+        self._event_queue = None
+        self._reader_task = None
+        self._consumer_task = None
 
     def close(self) -> None:
         """Close WS resources and release this bridge's app-server lease."""
@@ -217,8 +225,16 @@ class CodexBridge:
         self._closed.clear()
         self._closed_reason = ""
         self._handler = MessageHandler(self.session)
+        self._event_queue = asyncio.Queue(maxsize=self._queue_size)
         try:
-            asyncio.create_task(self._reader_loop())
+            self._consumer_task = asyncio.create_task(
+                self._consumer_loop(),
+                name=f"codex-consumer-{self.session.session_key}",
+            )
+            self._reader_task = asyncio.create_task(
+                self._reader_loop(),
+                name=f"codex-reader-{self.session.session_key}",
+            )
             init = await self.rpc(
                 "initialize",
                 wire.InitializeParams(
@@ -243,6 +259,19 @@ class CodexBridge:
             except Exception:
                 pass
 
+    async def _shutdown_workers(self) -> None:
+        if self._event_queue is not None:
+            try:
+                self._event_queue.put_nowait(None)
+            except Exception:
+                pass
+        for task in (self._reader_task, self._consumer_task):
+            if task is not None and not task.done():
+                task.cancel()
+        tasks = [task for task in (self._reader_task, self._consumer_task) if task is not None]
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
     async def _reader_loop(self) -> None:
         try:
             async for raw in self.ws:
@@ -252,10 +281,10 @@ class CodexBridge:
                     logger.warning("codex bridge: non-JSON frame dropped")
                     continue
                 logger.debug("codex ws ← %s", json.dumps(msg, ensure_ascii=False)[:500])
-                try:
-                    await self._handler.dispatch(msg)
-                except Exception as exc:
-                    logger.exception("codex handler failed on frame: %s", exc)
+                if self._event_queue is None:
+                    logger.warning("codex bridge: event queue missing; dropping frame")
+                    continue
+                await self._event_queue.put(msg)
         except Exception as exc:
             if _is_websocket_closed(exc):
                 logger.warning("codex bridge reader exited: websocket closed: %s", exc)
@@ -268,6 +297,28 @@ class CodexBridge:
         else:
             self._mark_closed("websocket reader ended")
             self._fail_pending_rpcs("websocket reader ended")
+        finally:
+            if self._event_queue is not None:
+                try:
+                    await self._event_queue.put(None)
+                except Exception:
+                    pass
+
+    async def _consumer_loop(self) -> None:
+        if self._event_queue is None:
+            return
+        while True:
+            raw = await self._event_queue.get()
+            if raw is None:
+                return
+            try:
+                msg = raw
+                if not isinstance(msg, dict):
+                    logger.warning("codex bridge: unexpected queued item %r", type(msg))
+                    continue
+                await self._handler.dispatch(msg)
+            except Exception as exc:
+                logger.exception("codex handler failed on queued frame: %s", exc)
 
     def _mark_closed(self, reason: str) -> None:
         self._closed_reason = reason
