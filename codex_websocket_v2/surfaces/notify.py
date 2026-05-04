@@ -24,7 +24,9 @@ notify call.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
+import re
 from typing import Optional
 
 from ..core.state import TaskTarget
@@ -35,6 +37,14 @@ logger = logging.getLogger(__name__)
 # Used to route platform sends to the loop the live adapters are bound to.
 # Stays None in CLI mode — there's no separate "main loop" to bridge to.
 _MAIN_LOOP: Optional[asyncio.AbstractEventLoop] = None
+
+
+def _debug_stack(limit: int = 8) -> str:
+    frames = inspect.stack()[2 : 2 + limit]
+    parts = []
+    for frame in frames:
+        parts.append(f"{frame.function}@{frame.filename.rsplit('/', 1)[-1]}:{frame.lineno}")
+    return " <- ".join(parts)
 
 
 def set_main_loop(loop: Optional[asyncio.AbstractEventLoop]) -> None:
@@ -77,13 +87,65 @@ async def _send_via_main_loop(coro_factory) -> None:
             current is _MAIN_LOOP if _MAIN_LOOP is not None else None,
             _MAIN_LOOP.is_running() if _MAIN_LOOP is not None else None,
         )
-        await coro_factory()
-        return
+        return await coro_factory()
 
     logger.info("codex notify: dispatching to main loop via run_coroutine_threadsafe")
     future = asyncio.run_coroutine_threadsafe(coro_factory(), _MAIN_LOOP)
     # wrap_future bridges the concurrent.futures.Future to the calling loop.
-    await asyncio.wrap_future(future)
+    return await asyncio.wrap_future(future)
+
+
+async def _send_telegram_direct(pconfig, chat_id: str, message: str, thread_id: Optional[str]) -> None:
+    """Send Telegram notifications without live adapter or _send_telegram HTML detection."""
+    try:
+        from gateway.platforms.base import utf16_len
+        from gateway.platforms.telegram import TelegramAdapter, _strip_mdv2
+        from telegram import Bot
+        from telegram.constants import ParseMode
+
+        token = getattr(pconfig, "token", None)
+        if not token:
+            logger.warning("codex notify: Telegram token missing")
+            return
+
+        adapter = TelegramAdapter.__new__(TelegramAdapter)
+        formatted = adapter.format_message(message)
+        chunks = adapter.truncate_message(
+            formatted,
+            getattr(TelegramAdapter, "MAX_MESSAGE_LENGTH", 4096),
+            len_fn=utf16_len,
+        )
+        if len(chunks) > 1:
+            chunks = [
+                re.sub(r" \((\d+)/(\d+)\)$", r" \\(\1/\2\\)", chunk)
+                for chunk in chunks
+            ]
+
+        bot = Bot(token=token)
+        effective_thread_id = int(thread_id) if thread_id else None
+        for chunk in chunks:
+            try:
+                await bot.send_message(
+                    chat_id=int(chat_id),
+                    text=chunk,
+                    parse_mode=ParseMode.MARKDOWN_V2,
+                    message_thread_id=effective_thread_id,
+                )
+            except Exception as md_error:
+                if "parse" not in str(md_error).lower() and "markdown" not in str(md_error).lower():
+                    raise
+                logger.warning(
+                    "codex notify: Telegram MarkdownV2 parse failed, falling back to plain text: %s",
+                    md_error,
+                )
+                await bot.send_message(
+                    chat_id=int(chat_id),
+                    text=_strip_mdv2(chunk),
+                    parse_mode=None,
+                    message_thread_id=effective_thread_id,
+                )
+    except Exception as exc:
+        logger.warning("codex notify: direct Telegram send failed: %s", exc)
 
 
 async def notify_user(target: Optional[TaskTarget], message: str) -> None:
@@ -96,6 +158,17 @@ async def notify_user(target: Optional[TaskTarget], message: str) -> None:
         logger.info("codex notify (no target): %s", message[:200])
         return
     try:
+        logger.warning(
+            "codex notify debug: enter platform=%r chat_id=%r thread_id=%r "
+            "message_id=%s len=%s preview=%r stack=%s",
+            target.platform,
+            target.chat_id,
+            target.thread_id,
+            id(message),
+            len(message) if message is not None else None,
+            (message or "")[:200],
+            _debug_stack(),
+        )
         _try_capture_main_loop()
 
         from gateway.config import load_gateway_config, Platform
@@ -125,12 +198,16 @@ async def notify_user(target: Optional[TaskTarget], message: str) -> None:
 
         chat_id = target.chat_id
         thread_id = target.thread_id or None
-
-        await _send_via_main_loop(
-            lambda: _send_to_platform(
-                platform, pconfig, chat_id, message, thread_id=thread_id,
+        if platform == Platform.TELEGRAM:
+            await _send_via_main_loop(
+                lambda: _send_telegram_direct(pconfig, chat_id, message, thread_id)
             )
-        )
+        else:
+            await _send_via_main_loop(
+                lambda: _send_to_platform(
+                    platform, pconfig, chat_id, message, thread_id=thread_id,
+                )
+            )
 
         # Mirror the same text into the hermes session transcript so the
         # agent's conversation log reflects what was pushed to the platform.

@@ -74,6 +74,19 @@ class NotificationSubscriber:
         except Exception as exc:
             logger.warning("codex handler task failed: %s", exc)
 
+    async def _notify_debug(self, task: "Task", reason: str, message: str, **fields: Any) -> None:
+        logger.warning(
+            "codex notify debug: subscriber reason=%s task_id=%r fields=%r "
+            "message_id=%s len=%s preview=%r",
+            reason,
+            getattr(task, "task_id", None),
+            fields,
+            id(message),
+            len(message),
+            message[:120],
+        )
+        await self.session.notify(message)
+
     def _item_started(self, event: ItemStartedEvent) -> None:
         item_id = getattr(event.item, "id", None)
         if item_id:
@@ -109,13 +122,24 @@ class NotificationSubscriber:
         text = (getattr(item, "text", "") or "").strip()
         if not text:
             return
-        prefix = f"🤖 `{task.task_id}`\n\n"
-        await self.session.notify(prefix + text)
+        message = f"🤖 `{task.task_id}`\n\n{text}"
+        await self._notify_debug(
+            task,
+            "agentMessage",
+            message,
+            item_id=getattr(item, "id", None),
+            item_type=getattr(item, "type", None),
+        )
 
     async def _plan(self, task: "Task", item: Any) -> None:
         text = (getattr(item, "text", "") or "").strip()
         if text:
-            await self.session.notify(f"📋 `{task.task_id}` plan\n\n{text}")
+            await self._notify_debug(
+                task,
+                "plan",
+                f"📋 `{task.task_id}` plan\n\n{text}",
+                item_id=getattr(item, "id", None),
+            )
 
     async def _command_execution(self, task: "Task", item: Any) -> None:
         cmd = (getattr(item, "command", "") or "").strip()
@@ -125,7 +149,13 @@ class NotificationSubscriber:
         lines = [f"{icon} `{cmd}` (exit {exit_code})"]
         if output:
             lines.append(f"```\n{_middle_ellipsize(output, MAX_COMMAND_OUTPUT)}\n```")
-        await self.session.notify("\n".join(lines))
+        await self._notify_debug(
+            task,
+            "commandExecution",
+            "\n".join(lines),
+            item_id=getattr(item, "id", None),
+            exit_code=exit_code,
+        )
 
     async def _file_change(self, task: "Task", item: Any) -> None:
         changes = getattr(item, "changes", None) or []
@@ -138,26 +168,51 @@ class NotificationSubscriber:
             kind_value = getattr(kind, "value", kind)
             icon = {"create": "➕", "delete": "➖"}.get(kind_value, "✏️")
             lines.append(f"  {icon} `{path}`")
-        await self.session.notify("\n".join(lines))
+        await self._notify_debug(
+            task,
+            "fileChange",
+            "\n".join(lines),
+            item_id=getattr(item, "id", None),
+        )
 
     async def _web_search(self, task: "Task", item: Any) -> None:
         query = (getattr(item, "query", "") or "").strip()
         if query:
-            await self.session.notify(f"🔍 `{task.task_id}` search: {query}")
+            await self._notify_debug(
+                task,
+                "webSearch",
+                f"🔍 `{task.task_id}` search: {query}",
+                item_id=getattr(item, "id", None),
+            )
 
     async def _entered_review_mode(self, task: "Task", item: Any) -> None:
         review = (getattr(item, "review", "") or "").strip()
-        await self.session.notify(f"👁️ `{task.task_id}` entered review mode: {review}")
+        await self._notify_debug(
+            task,
+            "enteredReviewMode",
+            f"👁️ `{task.task_id}` entered review mode: {review}",
+            item_id=getattr(item, "id", None),
+        )
 
     async def _exited_review_mode(self, task: "Task", item: Any) -> None:
         review = (getattr(item, "review", "") or "").strip()
         msg = f"👁️ `{task.task_id}` review complete"
         if review:
             msg += f"\n\n{review}"
-        await self.session.notify(msg)
+        await self._notify_debug(
+            task,
+            "exitedReviewMode",
+            msg,
+            item_id=getattr(item, "id", None),
+        )
 
     async def _context_compaction(self, task: "Task", item: Any) -> None:
-        await self.session.notify(f"🗜️ `{task.task_id}` context compacted")
+        await self._notify_debug(
+            task,
+            "contextCompaction",
+            f"🗜️ `{task.task_id}` context compacted",
+            item_id=getattr(item, "id", None),
+        )
 
     def _turn_started(self, event: TurnStartedEvent) -> None:
         turn_id = getattr(event.turn, "id", "") or ""
@@ -182,14 +237,32 @@ class NotificationSubscriber:
             code = getattr(error, "codexErrorInfo", None)
             code_str = getattr(code, "value", code) if code else ""
             error_str = f"{msg_text} ({code_str})" if code_str else msg_text
-            await self.session.notify(f"❌ Codex task `{task.task_id}` failed: {error_str}")
+            await self._notify_debug(
+                task,
+                "turn_completed_failed",
+                f"❌ Codex task `{task.task_id}` failed: {error_str}",
+                turn_id=turn_id,
+                status=status,
+            )
         elif status == "interrupted":
-            await self.session.notify(f"⏱️ Codex task `{task.task_id}` interrupted")
+            await self._notify_debug(
+                task,
+                "turn_completed_interrupted",
+                f"⏱️ Codex task `{task.task_id}` interrupted",
+                turn_id=turn_id,
+                status=status,
+            )
         else:
-            await self.session.notify(
-                f"✅ Codex task `{task.task_id}` turn completed "
-                f"(thread still alive — use reply to continue)\n"
-                f"Continue: `/codex reply {task.task_id} [message]`",
+            await self._notify_debug(
+                task,
+                "turn_completed",
+                (
+                    f"✅ Codex task `{task.task_id}` turn completed "
+                    f"(thread still alive — use reply to continue)\n"
+                    f"Continue: `/codex reply {task.task_id} [message]`"
+                ),
+                turn_id=turn_id,
+                status=status,
             )
 
     async def _server_request_resolved(self, event: ServerRequestResolvedEvent) -> None:
@@ -209,7 +282,13 @@ class NotificationSubscriber:
         message = f"✅ Codex task `{task.task_id}` {request_type} request resolved"
         if preview:
             message += f": {preview}"
-        await self.session.notify(message)
+        await self._notify_debug(
+            task,
+            "server_request_resolved",
+            message,
+            request_id=request_id,
+            request_type=request_type,
+        )
 
     def _task_for_request_id(self, request_id: Any) -> "Task | None":
         for task in self.session.tasks.values():
