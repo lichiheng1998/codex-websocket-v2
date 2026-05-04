@@ -184,27 +184,27 @@ def _cmd_help() -> str:
         "  `/codex list --threads` — list all threads on the server\n"
         "  `/codex models` — list available models from app-server\n"
         "  `/codex model` — show current default model (this session)\n"
-        "  `/codex model <model_id>` — set default model for this session\n"
-        "  `/codex model <task_id> [model_id]` — show or set a task's model\n"
-        "  `/codex reply <task_id> <message>` — send follow-up turn to Codex\n"
-        "  `/codex answer <task_id> <answer>` — answer a Codex question\n"
-        "  `/codex answer <task_id> <a1> | <a2> | <a3>` — answer multiple questions (separate with ' | ')\n"
-        "  `/codex answer <task_id> [q1a|q1b] [q2a]` — multiple answers for individual questions\n"
-        "  `/codex approve <task_id>` — approve a pending Codex request\n"
-        "  `/codex approve --all <task_id>` — approve and stop prompting for similar commands this session\n"
-        "  `/codex deny <task_id>` — deny a pending Codex request\n"
-        "  `/codex respond <task_id> [json]` — respond to an elicitation with schema data\n"
-        "  `/codex pending <task_id>` — show a task's pending request details\n"
-        "  `/codex archive <task_id>` — archive a specific task\n"
+        "  `/codex model [model_id]` — set default model for this session\n"
+        "  `/codex model [task_id] [model_id]` — show or set a task's model\n"
+        "  `/codex reply [task_id] [message]` — send follow-up turn to Codex\n"
+        "  `/codex answer [task_id] [answer]` — answer a Codex question\n"
+        "  `/codex answer [task_id] answer1 | answer2 | answer3` — answer multiple questions (separate with ' | ')\n"
+        "  `/codex answer [task_id] [q1a|q1b] [q2a]` — multiple answers for individual questions\n"
+        "  `/codex approve [task_id]` — approve a pending Codex request\n"
+        "  `/codex approve --all [task_id]` — approve and stop prompting for similar commands this session\n"
+        "  `/codex deny [task_id]` — deny a pending Codex request\n"
+        "  `/codex respond [task_id] [json]` — respond to an elicitation with schema data\n"
+        "  `/codex pending [task_id]` — show a task's pending request details\n"
+        "  `/codex archive [task_id]` — archive a specific task\n"
         "  `/codex archive --all` — archive all tasks in this session\n"
         "  `/codex archive --threads` — archive every thread on the server\n"
         "  `/codex plan [on|off]` — show or set default plan mode\n"
-        "  `/codex plan <task_id> [on|off]` — show or set a task's plan mode\n"
+        "  `/codex plan [task_id] [on|off]` — show or set a task's plan mode\n"
         "  `/codex verbose off|mid|on` — set verbosity (off = last item + turn end; mid = agentMessage + turn end; on = all)\n"
         "  `/codex sandbox [read|write|full]` — show or set default sandbox policy\n"
-        "  `/codex sandbox <task_id> [read|write|full]` — show or set a task's sandbox policy\n"
+        "  `/codex sandbox [task_id] [read|write|full]` — show or set a task's sandbox policy\n"
         "  `/codex approval [on-request|on-failure|never|untrusted]` — show or set default approval policy\n"
-        "  `/codex approval <task_id> [on-request|on-failure|never|untrusted]` — show or set a task's approval policy\n"
+        "  `/codex approval [task_id] [on-request|on-failure|never|untrusted]` — show or set a task's approval policy\n"
         "  `/codex status [task_id]` — show session or task status"
     )
 
@@ -247,7 +247,7 @@ def _list_tasks() -> str:
             flag = f"  ⚠️ pending {pending.get('type')}"
         thread_id = task.get("thread_id") or ""
         lines.append(f"  `{task.get('task_id')}` → `{thread_id[:8]}…`{flag}")
-    lines.append("\nReply: `/codex reply <task_id> <message>`")
+    lines.append("\nReply: `/codex reply [task_id] [message]`")
     return "\n".join(lines)
 
 
@@ -331,7 +331,7 @@ def _scope_suffix(result: dict) -> str:
 def _cmd_model(args: list[str]) -> str:
     task_id, model_id, error = _split_scope_args(args)
     if error:
-        return "Usage: `/codex model [model_id]` or `/codex model <task_id> [model_id]`"
+        return "Usage: `/codex model [model_id]` or `/codex model [task_id] [model_id]`"
 
     if not model_id:
         result = _call("codex_models", {"action": "get", "task_id": task_id})
@@ -408,7 +408,7 @@ def _cmd_archive(ns: argparse.Namespace) -> str:
     elif ns.task_id:
         target = ns.task_id
     else:
-        return "Specify a task_id, --all, or --threads. Usage: `/codex archive [--all | --threads | <task_id>]`"
+        return "Specify a task_id, --all, or --threads. Usage: `/codex archive [--all | --threads | task_id]`"
 
     result = _call("codex_tasks", {"action": "archive", "target": target})
     scope = result.get("scope")
@@ -449,7 +449,7 @@ _PLAN_ALIASES = {
 def _cmd_plan(args: list[str]) -> str:
     task_id, toggle, error = _split_scope_args(args, set(_PLAN_ALIASES))
     if error:
-        return "Usage: `/codex plan [on|off]` or `/codex plan <task_id> [on|off]`"
+        return "Usage: `/codex plan [on|off]` or `/codex plan [task_id] [on|off]`"
 
     if toggle is None:
         result = _call("codex_session", {"action": "plan_get", "task_id": task_id})
@@ -496,7 +496,7 @@ def _cmd_reply(ns: argparse.Namespace) -> str:
     task_id = ns.task_id
     message = " ".join(ns.message).strip() if ns.message else ""
     if not message:
-        return "Missing message. Usage: `/codex reply <task_id> <message>`"
+        return "Missing message. Usage: `/codex reply [task_id] [message]`"
     result = _call("codex_action", {
         "action": "reply",
         "task_id": task_id,
@@ -512,9 +512,9 @@ def _cmd_answer(ns: argparse.Namespace) -> str:
     raw = " ".join(ns.answers).strip() if ns.answers else ""
     if not raw:
         return (
-            "Missing answer. Usage: `/codex answer <task_id> <answer>`, "
-            "`/codex answer <task_id> <a1> | <a2>`, or "
-            "`/codex answer <task_id> [<q1a>|<q1b>] [<q2a>]`"
+            "Missing answer. Usage: `/codex answer [task_id] [answer]`, "
+            "`/codex answer [task_id] answer1 | answer2`, or "
+            "`/codex answer [task_id] [q1a|q1b] [q2a]`"
         )
     grouped_answers = _parse_answer_groups(raw)
     if grouped_answers is not None:
@@ -584,7 +584,7 @@ _SANDBOX_ALIASES = {
 def _cmd_sandbox(args: list[str]) -> str:
     task_id, policy, error = _split_scope_args(args, set(_SANDBOX_ALIASES))
     if error:
-        return "Usage: `/codex sandbox [read|write|full]` or `/codex sandbox <task_id> [read|write|full]`"
+        return "Usage: `/codex sandbox [read|write|full]` or `/codex sandbox [task_id] [read|write|full]`"
 
     if policy is None:
         result = _call("codex_session", {"action": "sandbox_get", "task_id": task_id})
@@ -615,7 +615,7 @@ _APPROVAL_POLICIES = {"on-request", "on-failure", "never", "untrusted"}
 def _cmd_approval(args: list[str]) -> str:
     task_id, policy, error = _split_scope_args(args, _APPROVAL_POLICIES)
     if error:
-        return "Usage: `/codex approval [on-request|on-failure|never|untrusted]` or `/codex approval <task_id> [policy]`"
+        return "Usage: `/codex approval [on-request|on-failure|never|untrusted]` or `/codex approval [task_id] [policy]`"
 
     if policy is None:
         result = _call("codex_session", {"action": "approval_get", "task_id": task_id})

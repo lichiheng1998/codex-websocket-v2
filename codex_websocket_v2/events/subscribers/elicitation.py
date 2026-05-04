@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from typing import TYPE_CHECKING, Any
 
 from .approval import ApprovalRequestSubscriber
@@ -10,9 +9,6 @@ from ..models import ElicitationRequestedEvent
 
 if TYPE_CHECKING:
     from ...core.session import CodexSession
-
-MAX_ELICITATION_SCHEMA_PREVIEW = 300
-
 
 def _elicitation_value(elicitation: Any, inner: Any, name: str, default: Any = None) -> Any:
     """Read modern flat params, while tolerating the old nested shape."""
@@ -32,6 +28,26 @@ def _dump_schema(schema: Any) -> dict[str, Any]:
 def _schema_has_fields(schema: dict[str, Any]) -> bool:
     properties = schema.get("properties")
     return isinstance(properties, dict) and bool(properties)
+
+
+def _schema_field_summary(schema: dict[str, Any], *, limit: int = 8) -> str:
+    properties = schema.get("properties") or {}
+    required = set(schema.get("required") or [])
+    lines = ["Fields:"]
+    for name, spec in list(properties.items())[:limit]:
+        spec = spec or {}
+        if isinstance(spec, dict):
+            field_type = spec.get("type") or "any"
+            title = spec.get("title")
+        else:
+            field_type = "any"
+            title = None
+        required_mark = "*" if name in required else ""
+        suffix = f" — {title}" if title and title != name else ""
+        lines.append(f"- `{name}`{required_mark}: {field_type}{suffix}")
+    if len(properties) > limit:
+        lines.append(f"- ... and {len(properties) - limit} more fields")
+    return "\n".join(lines)
 
 
 class ElicitationSubscriber:
@@ -58,10 +74,13 @@ class ElicitationSubscriber:
             schema = _elicitation_value(elicitation, inner, "requestedSchema")
             schema_dict = _dump_schema(schema)
             if _schema_has_fields(schema_dict):
-                schema_json = json.dumps(schema_dict, ensure_ascii=False)[:MAX_ELICITATION_SCHEMA_PREVIEW]
                 stash_schema = schema_dict
                 heading = f"❓ `{task_id}` MCP `{server_name}` requests input:"
-                body = f"{elicit_msg}\nSchema: `{schema_json}`"
+                body = (
+                    f"{elicit_msg}\n"
+                    f"{_schema_field_summary(schema_dict)}\n"
+                    f"Full schema: `/codex pending {task_id}`"
+                )
                 footer = (
                     "Use `respond` to provide schema data, or `approve`/`deny` "
                     "to send empty content.\n"

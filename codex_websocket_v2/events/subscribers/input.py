@@ -52,13 +52,13 @@ class UserInputRequestSubscriber:
                 lines.append("   _(free-text answer accepted)_")
             if getattr(question, "isSecret", False):
                 lines.append("   _(secret answer requested; this chat message will be forwarded)_")
-        lines.append(f"\nAnswer with: `/codex answer {task.task_id} <your answer>`")
+        lines.append(f"\nAnswer with: `/codex answer {task.task_id} [answer]`")
         if len(questions) > 1:
             lines.append(
-                f"Multiple answers: `/codex answer {task.task_id} <a1> | <a2> | <a3>`"
+                f"Multiple answers: `/codex answer {task.task_id} answer1 | answer2 | answer3`"
             )
         lines.append(
-            f"Multiple selections per question: `/codex answer {task.task_id} [<q1a>|<q1b>] [<q2a>]`"
+            f"Multiple selections per question: `/codex answer {task.task_id} [q1a|q1b] [q2a]`"
         )
         lines.append("Use the exact option label shown above when options are listed.")
 

@@ -18,7 +18,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-MAX_NOTIFY_TEXT = 4000
 MAX_COMMAND_OUTPUT = 1000
 
 
@@ -100,9 +99,6 @@ class NotificationSubscriber:
         if not text:
             return
         prefix = f"🤖 `{task.task_id}`\n\n"
-        max_text = MAX_NOTIFY_TEXT - len(prefix)
-        if len(text) > max_text:
-            text = text[:max_text] + "\n…(truncated)"
         await self.session.notify(prefix + text)
 
     async def _plan(self, task: "Task", item: Any) -> None:
@@ -117,7 +113,7 @@ class NotificationSubscriber:
         icon = "✅" if exit_code == 0 else "❌"
         lines = [f"{icon} `{cmd}` (exit {exit_code})"]
         if output:
-            lines.append(f"```\n{output[:MAX_COMMAND_OUTPUT]}\n```")
+            lines.append(f"```\n{_middle_ellipsize(output, MAX_COMMAND_OUTPUT)}\n```")
         await self.session.notify("\n".join(lines))
 
     async def _file_change(self, task: "Task", item: Any) -> None:
@@ -174,7 +170,7 @@ class NotificationSubscriber:
             await self.session.notify(
                 f"✅ Codex task `{task.task_id}` turn completed "
                 f"(thread still alive — use reply to continue)\n"
-                f"Continue: `/codex reply {task.task_id} <message>`",
+                f"Continue: `/codex reply {task.task_id} [message]`",
             )
 
     async def _server_request_resolved(self, event: ServerRequestResolvedEvent) -> None:
@@ -222,3 +218,25 @@ def _same_request_id(left: Any, right: Any) -> bool:
     if left_root == right_root:
         return True
     return str(left_root) == str(right_root)
+
+
+def _middle_ellipsize(text: str, max_chars: int) -> str:
+    """Keep the beginning and end of long command output with an explicit gap."""
+    if len(text) <= max_chars:
+        return text
+    marker_template = "\n... omitted {omitted} characters ...\n"
+    marker = marker_template.format(omitted=0)
+    budget = max(0, max_chars - len(marker))
+    head_len = (budget + 1) // 2
+    tail_len = budget // 2
+    omitted = len(text) - head_len - tail_len
+    marker = marker_template.format(omitted=omitted)
+    while head_len + tail_len + len(marker) > max_chars and (head_len or tail_len):
+        if head_len >= tail_len and head_len > 0:
+            head_len -= 1
+        elif tail_len > 0:
+            tail_len -= 1
+        omitted = len(text) - head_len - tail_len
+        marker = marker_template.format(omitted=omitted)
+    tail = text[len(text) - tail_len :].lstrip() if tail_len else ""
+    return text[:head_len].rstrip() + marker + tail

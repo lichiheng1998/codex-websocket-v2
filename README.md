@@ -134,29 +134,29 @@ For scoped actions, omit `task_id` to operate on the session default; pass `task
 ```
 /codex                                        — list this session's tasks
 /codex list [--threads]                       — list tasks (or all server threads)
-/codex reply <task_id> <message>              — send a follow-up turn to Codex
-/codex answer <task_id> <answer>              — answer a single Codex question
-/codex answer <task_id> <a1> | <a2> | <a3>   — answer multiple questions (separated by ' | ')
-/codex answer <task_id> [q1a|q1b] [q2a]      — multiple answers for individual questions
-/codex approve <task_id>                      — approve a pending request
-/codex approve --all <task_id>                — approve and stop prompting for similar commands this session
-/codex deny <task_id>                         — deny a pending request
-/codex pending <task_id>                      — show a task's pending request details
-/codex archive <task_id>                      — archive a specific task
+/codex reply [task_id] [message]              — send a follow-up turn to Codex
+/codex answer [task_id] [answer]              — answer a single Codex question
+/codex answer [task_id] answer1 | answer2 | answer3   — answer multiple questions (separated by ' | ')
+/codex answer [task_id] [q1a|q1b] [q2a]      — multiple answers for individual questions
+/codex approve [task_id]                      — approve a pending request
+/codex approve --all [task_id]                — approve and stop prompting for similar commands this session
+/codex deny [task_id]                         — deny a pending request
+/codex pending [task_id]                      — show a task's pending request details
+/codex archive [task_id]                      — archive a specific task
 /codex archive --all                          — archive all tasks in this session
 /codex archive --threads                      — archive every thread on the server
-/codex model [<model_id>]                     — show or set default model
-/codex model <task_id> [<model_id>]           — show or set a task's model
+/codex model [model_id]                     — show or set default model
+/codex model [task_id] [model_id]           — show or set a task's model
 /codex models                                 — list available models
 /codex plan [on|off]                          — show or set default plan mode
-/codex plan <task_id> [on|off]                — show or set a task's plan mode
+/codex plan [task_id] [on|off]                — show or set a task's plan mode
 /codex verbose [off|mid|on]                   — set notification verbosity
 /codex sandbox [read|write|full]              — show or set default sandbox policy
-/codex sandbox <task_id> [read|write|full]    — show or set a task's sandbox policy
+/codex sandbox [task_id] [read|write|full]    — show or set a task's sandbox policy
 /codex approval [policy]                      — show or set default approval policy
-/codex approval <task_id> [policy]            — show or set a task's approval policy
+/codex approval [task_id] [policy]            — show or set a task's approval policy
 /codex status [task_id]                       — show session or task status
-/codex help [<subcommand>]
+/codex help [subcommand]
 ```
 
 **Verbose levels:**

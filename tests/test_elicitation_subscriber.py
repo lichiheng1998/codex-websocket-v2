@@ -7,9 +7,15 @@ from types import SimpleNamespace
 from codex_websocket_v2.core.session import CodexSession
 from codex_websocket_v2.core.state import Task, TaskTarget
 from codex_websocket_v2.events.factory import EventFactory
-from codex_websocket_v2.events.models import ItemCompletedEvent, ItemStartedEvent, ServerRequestResolvedEvent
+from codex_websocket_v2.events.models import (
+    ItemCompletedEvent,
+    ItemStartedEvent,
+    ServerRequestResolvedEvent,
+    UserInputRequestedEvent,
+)
 from codex_websocket_v2.events.subscribers.approval import ApprovalRequestSubscriber
 from codex_websocket_v2.events.subscribers.elicitation import ElicitationSubscriber
+from codex_websocket_v2.events.subscribers.input import UserInputRequestSubscriber
 from codex_websocket_v2.events.subscribers.notification import NotificationSubscriber
 from codex_websocket_v2.surfaces import commands
 from codex_websocket_v2.surfaces.tool_actions import dispatch_tool_action
@@ -97,7 +103,13 @@ def test_elicitation_subscriber_stashes_flat_requested_schema() -> None:
         "required": ["city", "days"],
         "type": "object",
     }
-    assert '"city"' in session.notifications[0]
+    notification = session.notifications[0]
+    assert "Fields:" in notification
+    assert "`city`*: string — Destination city" in notification
+    assert "`days`*: integer — Trip length" in notification
+    assert "`includeFood`: boolean — Include food suggestions" in notification
+    assert "Full schema: `/codex pending task-1`" in notification
+    assert '"properties"' not in notification
     assert "/codex approve task-1" in session.notifications[0]
     assert "/codex respond task-1" in session.notifications[0]
 
@@ -245,6 +257,75 @@ def test_notification_subscriber_caches_started_items_until_completed() -> None:
     asyncio.run(subscriber(ItemCompletedEvent(session=session, raw={}, task=session.task, item=item, item_type="fileChange")))
 
     assert "item-1" not in session.task.started_items
+
+
+def test_notification_subscriber_does_not_truncate_long_agent_message() -> None:
+    session = FakeSession()
+    session.verbose = "on"
+    subscriber = NotificationSubscriber(session)
+    text = "x" * 5000
+    item = SimpleNamespace(id="msg-1", text=text)
+
+    asyncio.run(subscriber(ItemCompletedEvent(session=session, raw={}, task=session.task, item=item, item_type="agentMessage")))
+
+    notification = session.notifications[0]
+    assert text in notification
+    assert "truncated" not in notification
+
+
+def test_notification_subscriber_middle_ellipsizes_long_command_output() -> None:
+    session = FakeSession()
+    session.verbose = "on"
+    subscriber = NotificationSubscriber(session)
+    output = "A" * 800 + "MIDDLE" + "Z" * 800
+    item = SimpleNamespace(id="cmd-1", command="pytest", exitCode=0, aggregatedOutput=output)
+
+    asyncio.run(subscriber(ItemCompletedEvent(session=session, raw={}, task=session.task, item=item, item_type="commandExecution")))
+
+    notification = session.notifications[0]
+    assert "A" * 100 in notification
+    assert "Z" * 100 in notification
+    assert "MIDDLE" not in notification
+    assert "... omitted " in notification
+    assert notification.count("```") == 2
+
+
+def test_user_input_notification_avoids_html_like_placeholders() -> None:
+    session = FakeSession()
+    params = SimpleNamespace(
+        questions=[
+            SimpleNamespace(
+                header="Choice",
+                question="Pick one",
+                options=[SimpleNamespace(label="A", description="Alpha")],
+                isOther=False,
+                isSecret=False,
+            ),
+            SimpleNamespace(
+                header="Confirm",
+                question="Continue?",
+                options=[],
+                isOther=False,
+                isSecret=False,
+            ),
+        ]
+    )
+    event = UserInputRequestedEvent(
+        session=session,
+        raw={},
+        rpc_id=13,
+        params=params,
+        task=session.task,
+        thread_id="thread-1",
+    )
+
+    asyncio.run(UserInputRequestSubscriber(session)(event))
+
+    notification = session.notifications[0]
+    assert "<" not in notification
+    assert ">" not in notification
+    assert "/codex answer task-1 [answer]" in notification
+    assert "answer1 | answer2 | answer3" in notification
 
 
 def test_server_request_resolved_clears_pending_request_and_notifies() -> None:

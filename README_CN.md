@@ -134,29 +134,29 @@ Task 创建时会固定自己的 `model`、`plan`、`sandbox_policy`、`approval
 ```
 /codex                                        — 列出当前 session 的 task
 /codex list [--threads]                       — 列出 task（或服务器全部 thread）
-/codex reply <task_id> <message>              — 向 Codex 发送后续 turn 消息
-/codex answer <task_id> <answer>              — 回答单个 Codex 问题
-/codex answer <task_id> <a1> | <a2> | <a3>   — 回答多个问题（用 ' | ' 分隔）
-/codex answer <task_id> [q1a|q1b] [q2a]      — 为单个问题提供多个答案
-/codex approve <task_id>                      — 批准挂起的请求
-/codex approve --all <task_id>                — 批准并本 session 内不再为类似命令弹审批
-/codex deny <task_id>                         — 拒绝挂起的请求
-/codex pending <task_id>                      — 查看 task 挂起请求的详细信息
-/codex archive <task_id>                      — 归档指定 task
+/codex reply [task_id] [message]              — 向 Codex 发送后续 turn 消息
+/codex answer [task_id] [answer]              — 回答单个 Codex 问题
+/codex answer [task_id] answer1 | answer2 | answer3   — 回答多个问题（用 ' | ' 分隔）
+/codex answer [task_id] [q1a|q1b] [q2a]      — 为单个问题提供多个答案
+/codex approve [task_id]                      — 批准挂起的请求
+/codex approve --all [task_id]                — 批准并本 session 内不再为类似命令弹审批
+/codex deny [task_id]                         — 拒绝挂起的请求
+/codex pending [task_id]                      — 查看 task 挂起请求的详细信息
+/codex archive [task_id]                      — 归档指定 task
 /codex archive --all                          — 归档当前 session 全部 task
 /codex archive --threads                      — 归档服务器全部 thread
-/codex model [<model_id>]                     — 查看或设置默认模型
-/codex model <task_id> [<model_id>]           — 查看或设置 task 模型
+/codex model [model_id]                     — 查看或设置默认模型
+/codex model [task_id] [model_id]           — 查看或设置 task 模型
 /codex models                                 — 列出可用模型
 /codex plan [on|off]                          — 查看或设置默认 plan 模式
-/codex plan <task_id> [on|off]                — 查看或设置 task plan 模式
+/codex plan [task_id] [on|off]                — 查看或设置 task plan 模式
 /codex verbose [off|mid|on]                   — 设置通知详细程度
 /codex sandbox [read|write|full]              — 查看或设置默认 sandbox 策略
-/codex sandbox <task_id> [read|write|full]    — 查看或设置 task sandbox 策略
+/codex sandbox [task_id] [read|write|full]    — 查看或设置 task sandbox 策略
 /codex approval [policy]                      — 查看或设置默认 approval 策略
-/codex approval <task_id> [policy]            — 查看或设置 task approval 策略
+/codex approval [task_id] [policy]            — 查看或设置 task approval 策略
 /codex status [task_id]                       — 查看 session 或 task 状态
-/codex help [<subcommand>]
+/codex help [subcommand]
 ```
 
 **Verbose 级别：**
