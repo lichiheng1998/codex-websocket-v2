@@ -22,15 +22,21 @@ def register(ctx) -> None:
     from .codex_websocket_v2.surfaces import commands
     from .codex_websocket_v2.surfaces import notify
 
-    # Capture the hermes main event loop so cross-thread sends (codex bridge
-    # runs on its own loop; weixin's aiohttp session is bound to the main
-    # loop) can be scheduled correctly. In CLI mode there is no async loop
-    # at register-time — leave it as None and notify_user falls through to
-    # a direct await (single-loop world, no bridging needed).
+    # Best-effort initial capture. The authoritative capture is the
+    # pre_tool_call hook below, which fires on the gateway/tool loop before
+    # codex starts its own bridge consumer loop.
     try:
         notify.set_main_loop(asyncio.get_running_loop())
     except RuntimeError:
         notify.set_main_loop(None)
+
+    def _capture_loop_before_codex_tool(**kwargs) -> None:
+        tool_name = str(kwargs.get("tool_name") or "")
+        if not tool_name.startswith("codex_"):
+            return
+        notify.capture_current_loop(f"pre_tool_call:{tool_name}")
+
+    ctx.register_hook("pre_tool_call", _capture_loop_before_codex_tool)
 
     ctx.register_tool(
         name="codex_task",

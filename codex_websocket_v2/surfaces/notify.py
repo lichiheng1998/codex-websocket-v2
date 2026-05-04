@@ -10,11 +10,10 @@ warning).
 **Cross-loop dispatch**: codex bridges run on their own dedicated event
 loop (``codex-ws-{session_key}`` thread). Some platform adapters (e.g.
 weixin's live adapter) hold an aiohttp ``ClientSession`` that is bound to
-the hermes main loop — awaiting their ``send`` from the bridge loop raises
-``Timeout context manager should be used inside a task``. To fix this,
-``set_main_loop()`` records the hermes main loop at plugin register-time;
-``notify_user`` then schedules the send via ``run_coroutine_threadsafe``
-when the calling loop differs from the main loop.
+the hermes tool/gateway loop — awaiting their ``send`` from the bridge loop
+raises ``Timeout context manager should be used inside a task``. To fix this,
+the plugin captures the loop before codex tools execute; ``notify_user`` then
+schedules sends via ``run_coroutine_threadsafe`` when the calling loop differs.
 
 ``report_failure`` is the bridge's standard "task failed at stage X with
 detail Y" helper — kept here because its only side effect is one
@@ -33,7 +32,7 @@ from ..core.state import TaskTarget
 
 logger = logging.getLogger(__name__)
 
-# Captured at plugin register-time when hermes is running async (gateway mode).
+# Captured before codex tools execute when hermes is running async (gateway mode).
 # Used to route platform sends to the loop the live adapters are bound to.
 # Stays None in CLI mode — there's no separate "main loop" to bridge to.
 _MAIN_LOOP: Optional[asyncio.AbstractEventLoop] = None
@@ -48,24 +47,24 @@ def _debug_stack(limit: int = 8) -> str:
 
 
 def set_main_loop(loop: Optional[asyncio.AbstractEventLoop]) -> None:
-    """Record the hermes main event loop. Called by the plugin's ``register()``."""
+    """Record the hermes tool/gateway event loop."""
     global _MAIN_LOOP
     _MAIN_LOOP = loop
 
 
-def _try_capture_main_loop() -> None:
-    """Lazy capture of the gateway event loop if ``set_main_loop`` wasn't called.
-
-    This covers edge cases where ``register()`` ran outside the async context
-    (e.g. early import via ``model_tools``) and ``_MAIN_LOOP`` stayed None.
-    """
-    global _MAIN_LOOP
-    if _MAIN_LOOP is not None:
-        return
+def capture_current_loop(reason: str = "") -> None:
+    """Capture the current event loop before codex enters its bridge loop."""
     try:
-        _MAIN_LOOP = asyncio.get_running_loop()
+        loop = asyncio.get_running_loop()
     except RuntimeError:
-        pass
+        return
+    set_main_loop(loop)
+    logger.info(
+        "codex notify: captured tool loop reason=%s loop_id=%s running=%s",
+        reason,
+        id(loop),
+        loop.is_running(),
+    )
 
 
 async def _send_via_main_loop(coro_factory) -> None:
@@ -169,8 +168,6 @@ async def notify_user(target: Optional[TaskTarget], message: str) -> None:
             (message or "")[:200],
             _debug_stack(),
         )
-        _try_capture_main_loop()
-
         from gateway.config import load_gateway_config, Platform
         from tools.send_message_tool import _send_to_platform
 
