@@ -164,6 +164,41 @@ def _tasks_reply(session, args: dict) -> str:
     return ok(task_id=task_id)
 
 
+def _tasks_steer(session, args: dict) -> str:
+    task_id, result_error = require_str(
+        args, "task_id", message="task_id is required for steer"
+    )
+    if result_error is not None:
+        return result_error
+    message, result_error = require_str(
+        args, "message", message="message is required for steer"
+    )
+    if result_error is not None:
+        return result_error
+    try:
+        result = session.steer_task(task_id, message)
+    except Exception as exc:
+        return error(f"steer_task failed: {exc}")
+    if result_error := tool_error_from_result(result):
+        return result_error
+    return ok(task_id=task_id, turn_id=result.get("turn_id"))
+
+
+def _tasks_stop(session, args: dict) -> str:
+    task_id, result_error = require_str(
+        args, "task_id", message="task_id is required for stop"
+    )
+    if result_error is not None:
+        return result_error
+    try:
+        result = session.stop_task(task_id)
+    except Exception as exc:
+        return error(f"stop_task failed: {exc}")
+    if result_error := tool_error_from_result(result):
+        return result_error
+    return ok(task_id=task_id, turn_id=result.get("turn_id"))
+
+
 def _tasks_answer(session, args: dict) -> str:
     task_id, result_error = require_str(
         args, "task_id", message="task_id is required for answer"
@@ -259,21 +294,38 @@ def _tasks_archive(session, args: dict) -> str:
             "ok": result.get("ok", False),
             "scope": "allthreads",
             "removed": result.get("removed", 0),
+            "skipped": result.get("skipped", []),
             "errors": result.get("errors", []),
         }, ensure_ascii=False)
     if target == "all":
-        result = session.remove_all_tasks()
-        return json.dumps({
-            "ok": result.get("ok", False),
-            "scope": "all",
-            "removed": result.get("removed", 0),
-            "errors": result.get("errors", []),
-        }, ensure_ascii=False)
+        return error("archive target 'all' was removed; use codex_remove with all=true to unbind tasks")
 
-    result = session.remove_task(target)
+    result = session.archive_thread(target)
     if result_error := tool_error_from_result(result):
         return result_error
-    return ok(scope="task", task_id=target)
+    return ok(scope="thread", thread_id=result.get("thread_id", target))
+
+
+def dispatch_remove_tool(session, args: dict) -> str:
+    if args.get("all") is True:
+        result = session.remove_all_tasks()
+        if result_error := tool_error_from_result(result):
+            return result_error
+        return ok(scope="all", removed=result.get("removed", 0), tasks=result.get("tasks", []))
+
+    task_id, result_error = require_str(
+        args, "task_id", message="task_id is required for remove unless all=true"
+    )
+    if result_error is not None:
+        return result_error
+    result = session.remove_task(task_id)
+    if result_error := tool_error_from_result(result):
+        return result_error
+    return ok(
+        scope="task",
+        task_id=result.get("task_id", task_id),
+        thread_id=result.get("thread_id"),
+    )
 
 
 ActionHandler = Callable[[Any, dict], str]
@@ -418,6 +470,8 @@ ACTION_MAPS: dict[str, dict[str, ActionHandler]] = {
         "reply": _tasks_reply,
         "answer": _tasks_answer,
         "respond": _tasks_respond,
+        "steer": _tasks_steer,
+        "stop": _tasks_stop,
     },
     "session": {
         "status": _session_status,

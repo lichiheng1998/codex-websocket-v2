@@ -65,6 +65,11 @@ class UnknownRequestEvent(ServerRequestEvent):
 
 
 @dataclass
+class UnboundTaskEvent(ServerRequestEvent):
+    thread_id: Optional[str] = None
+
+
+@dataclass
 class ServerNotificationEvent(BaseEvent):
     method: str = ""
     params: Any = None
@@ -84,6 +89,13 @@ class ItemCompletedEvent(ServerNotificationEvent):
     task: Any = None
     item: Any = None
     item_type: str = ""
+
+
+@dataclass
+class TurnStartedEvent(ServerNotificationEvent):
+    thread_id: Optional[str] = None
+    task: Any = None
+    turn: Any = None
 
 
 @dataclass

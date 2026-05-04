@@ -7,7 +7,12 @@ from .elicitation import ElicitationSubscriber
 from .input import UserInputRequestSubscriber
 from .notification import NotificationSubscriber
 from .rpc import RpcErrorSubscriber, RpcResponseSubscriber
-from .unhandled import UnknownFrameSubscriber, UnhandledNotificationSubscriber, UnhandledRequestSubscriber
+from .unhandled import (
+    UnboundTaskSubscriber,
+    UnknownFrameSubscriber,
+    UnhandledNotificationSubscriber,
+    UnhandledRequestSubscriber,
+)
 from ..models import (
     ApprovalRequestedEvent,
     ElicitationRequestedEvent,
@@ -17,6 +22,8 @@ from ..models import (
     RpcResponseEvent,
     ServerRequestResolvedEvent,
     TurnCompletedEvent,
+    TurnStartedEvent,
+    UnboundTaskEvent,
     UnknownFrameEvent,
     UnknownNotificationEvent,
     UnknownRequestEvent,
@@ -30,10 +37,12 @@ def register_default_subscribers(bus, session) -> None:
     bus.subscribe(ApprovalRequestedEvent, ApprovalRequestSubscriber(session))
     bus.subscribe(UserInputRequestedEvent, UserInputRequestSubscriber(session))
     bus.subscribe(ElicitationRequestedEvent, ElicitationSubscriber(session))
+    bus.subscribe(UnboundTaskEvent, UnboundTaskSubscriber())
 
     notification = NotificationSubscriber(session)
     bus.subscribe(ItemStartedEvent, notification)
     bus.subscribe(ItemCompletedEvent, notification)
+    bus.subscribe(TurnStartedEvent, notification)
     bus.subscribe(TurnCompletedEvent, notification)
     bus.subscribe(ServerRequestResolvedEvent, notification)
 

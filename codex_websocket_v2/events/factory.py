@@ -21,6 +21,8 @@ from .models import (
     RpcResponseEvent,
     ServerRequestResolvedEvent,
     TurnCompletedEvent,
+    TurnStartedEvent,
+    UnboundTaskEvent,
     UnknownFrameEvent,
     UnknownNotificationEvent,
     UnknownRequestEvent,
@@ -36,6 +38,16 @@ APPROVAL_METHODS = {
     "item/permissions/requestApproval": PERMISSIONS_APPROVAL,
     "execCommandApproval": LEGACY_EXEC_APPROVAL,
     "applyPatchApproval": LEGACY_APPLY_PATCH_APPROVAL,
+}
+TASK_SCOPED_REQUESTS = set(APPROVAL_METHODS) | {
+    "item/tool/requestUserInput",
+    "mcpServer/elicitation/request",
+}
+TASK_SCOPED_NOTIFICATIONS = {
+    "item/started",
+    "item/completed",
+    "turn/started",
+    "turn/completed",
 }
 
 
@@ -59,9 +71,14 @@ class EventFactory:
         method = req.method.value
         rpc_id = req.id.root
         params = req.params
+        if method in TASK_SCOPED_REQUESTS:
+            thread_id, task, task_id = self._task_context(method, params)
+            if thread_id and task is None:
+                return self._unbound_task_event(raw, method, params, rpc_id, thread_id)
+        else:
+            thread_id, task, task_id = None, None, "?"
+
         if method in APPROVAL_METHODS:
-            thread_id = self._thread_id(params)
-            task, task_id = self._task_meta(thread_id)
             return ApprovalRequestedEvent(
                 session=self.session,
                 raw=raw,
@@ -74,8 +91,6 @@ class EventFactory:
                 task_id=task_id,
             )
         if method == "item/tool/requestUserInput":
-            thread_id = getattr(params, "threadId", None)
-            task, task_id = self._task_meta(thread_id)
             return UserInputRequestedEvent(
                 session=self.session,
                 raw=raw,
@@ -87,9 +102,6 @@ class EventFactory:
                 task_id=task_id,
             )
         if method == "mcpServer/elicitation/request":
-            inner = params.root if hasattr(params, "root") else params
-            thread_id = getattr(inner, "threadId", None)
-            task, task_id = self._task_meta(thread_id)
             return ElicitationRequestedEvent(
                 session=self.session,
                 raw=raw,
@@ -105,9 +117,14 @@ class EventFactory:
     def _notification_event(self, notif: Any, raw: dict) -> Any:
         method = notif.method.value
         params = notif.params
+        if method in TASK_SCOPED_NOTIFICATIONS:
+            thread_id, task, _ = self._task_context(method, params)
+            if thread_id and task is None:
+                return self._unbound_task_event(raw, method, params, None, thread_id)
+        else:
+            thread_id, task = None, None
+
         if method == "item/started":
-            thread_id = getattr(params, "threadId", None)
-            task, _ = self._task_meta(thread_id)
             item = params.item.root
             item_type = getattr(getattr(item, "type", None), "value", None) or getattr(item, "type", "")
             return ItemStartedEvent(
@@ -120,9 +137,8 @@ class EventFactory:
                 item=item,
                 item_type=item_type,
             )
+
         if method == "item/completed":
-            thread_id = getattr(params, "threadId", None)
-            task, _ = self._task_meta(thread_id)
             item = params.item.root
             item_type = getattr(getattr(item, "type", None), "value", None) or getattr(item, "type", "")
             return ItemCompletedEvent(
@@ -135,9 +151,8 @@ class EventFactory:
                 item=item,
                 item_type=item_type,
             )
+
         if method == "turn/completed":
-            thread_id = getattr(params, "threadId", None)
-            task, _ = self._task_meta(thread_id)
             turn = params.turn
             status = getattr(turn.status, "value", turn.status)
             return TurnCompletedEvent(
@@ -149,6 +164,16 @@ class EventFactory:
                 task=task,
                 turn=turn,
                 status=status,
+            )
+        if method == "turn/started":
+            return TurnStartedEvent(
+                session=self.session,
+                raw=raw,
+                method=method,
+                params=params,
+                thread_id=thread_id,
+                task=task,
+                turn=params.turn,
             )
         if method == "serverRequest/resolved":
             return ServerRequestResolvedEvent(
@@ -163,6 +188,34 @@ class EventFactory:
     def _thread_id(self, params: Any) -> Optional[str]:
         return getattr(params, "threadId", None) or getattr(params, "conversationId", None)
 
+    def _thread_id_for_method(self, method: str, params: Any) -> Optional[str]:
+        if method == "mcpServer/elicitation/request":
+            inner = params.root if hasattr(params, "root") else params
+            return getattr(inner, "threadId", None)
+        return self._thread_id(params)
+
+    def _task_context(self, method: str, params: Any) -> tuple[Optional[str], Any, str]:
+        thread_id = self._thread_id_for_method(method, params)
+        task, task_id = self._task_meta(thread_id)
+        return thread_id, task, task_id
+
     def _task_meta(self, thread_id: Optional[str]) -> tuple[Any, str]:
         task = self.session.task_for_thread(thread_id) if thread_id else None
         return task, task.task_id if task else "?"
+
+    def _unbound_task_event(
+        self,
+        raw: dict,
+        method: str,
+        params: Any,
+        rpc_id: Any,
+        thread_id: str,
+    ) -> UnboundTaskEvent:
+        return UnboundTaskEvent(
+            session=self.session,
+            raw=raw,
+            method=method,
+            rpc_id=rpc_id,
+            params=params,
+            thread_id=thread_id,
+        )

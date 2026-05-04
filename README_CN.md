@@ -81,13 +81,21 @@ codex --version
 Task 创建时会固定自己的 `model`、`plan`、`sandbox_policy`、`approval_policy`。后续 reply 使用 task 自己的值；修改 session default 只影响未来 task。
 
 ### `codex_tasks`
-列出或归档当前 session 的 task 和 thread。
+列出 task/thread，或归档未绑定的服务器 thread。
 
 | Action | 参数 | 说明 |
 |---|---|---|
 | `list` | `show_threads` | 列出 session task（或服务器全部 thread） |
 | `show_pending` | `task_id` | 返回 task 当前挂起请求的详细信息（如果有） |
-| `archive` | `target` | 归档指定 task（`task_id`）、当前 session 全部 task（`all`）或服务器全部 thread（`allthreads`）。若 thread 被其他 session 持有则拒绝。 |
+| `archive` | `target` | 归档指定未绑定 thread（`thread_id`），或归档全部未绑定服务器 thread（`allthreads`）。已绑定 thread 会跳过或拒绝。 |
+
+### `codex_remove`
+解除当前 session 的 task 绑定，不归档服务器 thread。
+
+| 参数 | 说明 |
+|---|---|
+| `task_id` | 从当前 session 移除单个 task 绑定 |
+| `all` | 从当前 session 移除全部 task 绑定 |
 
 ### `codex_action`
 向已有 task 发送后续动作。
@@ -97,6 +105,8 @@ Task 创建时会固定自己的 `model`、`plan`、`sandbox_policy`、`approval
 | `reply` | `task_id`, `message` | 向运行中的 task 发送后续 turn 消息 |
 | `answer` | `task_id`, `responses[]` 或 `answers[][]` | 回答 `requestUserInput`；一个问题多个答案时用 `answers[][]` |
 | `respond` | `task_id`, `content` | 用符合 schema 的表单数据响应挂起的 elicitation |
+| `steer` | `task_id`, `message` | 向当前 active turn 注入指导文本 |
+| `stop` | `task_id` | 中断当前 active turn，不归档 task |
 
 ### `codex_approval`
 处理挂起的审批类请求。
@@ -135,6 +145,8 @@ Task 创建时会固定自己的 `model`、`plan`、`sandbox_policy`、`approval
 /codex                                        — 列出当前 session 的 task
 /codex list [--threads]                       — 列出 task（或服务器全部 thread）
 /codex reply [task_id] [message]              — 向 Codex 发送后续 turn 消息
+/codex steer [task_id] [message]              — 指导正在运行的 turn
+/codex stop [task_id]                         — 停止正在运行的 turn
 /codex answer [task_id] [answer]              — 回答单个 Codex 问题
 /codex answer [task_id] answer1 | answer2 | answer3   — 回答多个问题（用 ' | ' 分隔）
 /codex answer [task_id] [q1a|q1b] [q2a]      — 为单个问题提供多个答案
@@ -142,9 +154,10 @@ Task 创建时会固定自己的 `model`、`plan`、`sandbox_policy`、`approval
 /codex approve --all [task_id]                — 批准并本 session 内不再为类似命令弹审批
 /codex deny [task_id]                         — 拒绝挂起的请求
 /codex pending [task_id]                      — 查看 task 挂起请求的详细信息
-/codex archive [task_id]                      — 归档指定 task
-/codex archive --all                          — 归档当前 session 全部 task
-/codex archive --threads                      — 归档服务器全部 thread
+/codex archive [thread_id]                    — 归档未绑定的服务器 thread
+/codex archive --all                          — 归档全部未绑定服务器 thread
+/codex remove [task_id]                       — 解除当前 session 的 task 绑定
+/codex remove --all                           — 解除当前 session 的全部 task 绑定
 /codex model [model_id]                     — 查看或设置默认模型
 /codex model [task_id] [model_id]           — 查看或设置 task 模型
 /codex models                                 — 列出可用模型
@@ -171,7 +184,11 @@ Task 创建时会固定自己的 `model`、`plan`、`sandbox_policy`、`approval
 | 模块 | 职责 |
 |---|---|
 | `__init__.py` | 插件注册，捕获主 event loop |
-| `session.py` | `CodexSession` — per-session 核心（task 和配置） |
+| `session.py` | `CodexSession` 组合入口、生命周期、面向 handler 的状态接口 |
+| `session_tasks.py` | task/thread 操作：start、reply、steer/stop、revive、archive/remove |
+| `session_requests.py` | approval、elicitation、user-input 响应 |
+| `session_settings.py` | model、mode、policy、verbose、status helper |
+| `session_drive.py` | thread/turn start 的后台 RPC 流程 |
 | `session_registry.py` | 全局 `{ platform:chat_id → CodexSession }` 注册表 |
 | `transport/bridge.py` | `CodexBridge` — server lease、WebSocket 连接、JSON-RPC 请求/响应配对 |
 | `transport/server_manager.py` | `CodexServerManager` — 引用计数管理 app-server 子进程 |

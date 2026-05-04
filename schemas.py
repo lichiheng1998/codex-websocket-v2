@@ -56,14 +56,14 @@ CODEX_REVIVE = {
 CODEX_TASKS = {
     "name": "codex_tasks",
     "description": (
-        "Inspect or archive Codex tasks/threads in the current session. "
+        "Inspect Codex tasks/threads or archive unbound server threads. "
         "Action 'list' returns this session's tasks; pass show_threads=true "
         "to instead list every thread on the codex app-server. "
         "'show_pending' returns a task's pending request details for input, "
         "approval, or MCP elicitation requests, if any. "
-        "'archive' removes a single task_id from this "
-        "session, or pass target='all' to archive every task in this session, "
-        "or target='allthreads' to archive every thread on the server. "
+        "'archive' archives a thread_id only when no active task is bound to "
+        "that thread, or pass target='allthreads' to archive every unbound "
+        "thread on the server. Use codex_remove to unbind tasks. "
         "Use codex_action for reply/answer/respond and codex_approval for "
         "approve/deny."
     ),
@@ -81,8 +81,8 @@ CODEX_TASKS = {
             "target": {
                 "type": "string",
                 "description": (
-                    "For archive: a task_id, 'all' (this session's tasks), "
-                    "or 'allthreads' (every thread on the server)."
+                    "For archive: a thread_id, or 'allthreads' to archive "
+                    "every unbound thread on the server."
                 ),
             },
             "show_threads": {
@@ -91,6 +91,30 @@ CODEX_TASKS = {
             },
         },
         "required": ["action"],
+    },
+}
+
+
+CODEX_REMOVE = {
+    "name": "codex_remove",
+    "description": (
+        "Unbind Codex tasks from their threads in the current session. "
+        "This only removes local task tracking; it does not stop active turns, "
+        "answer pending requests, or archive server threads. Pass task_id to "
+        "remove one task, or all=true to remove every task in this session."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "task_id": {
+                "type": "string",
+                "description": "Task id to unbind from this session.",
+            },
+            "all": {
+                "type": "boolean",
+                "description": "When true, unbind every task in this session.",
+            },
+        },
     },
 }
 
@@ -135,7 +159,9 @@ CODEX_ACTION = {
         "'reply' sends a follow-up turn message to a running task. "
         "Use this to continue a conversation after turn/completed; "
         "turn/completed only means the current turn ended, not that the thread "
-        "is finished. 'answer' resolves a pending requestUserInput from Codex; "
+        "is finished. 'steer' injects guidance into the current active turn. "
+        "'stop' interrupts the current active turn without archiving the task. "
+        "'answer' resolves a pending requestUserInput from Codex; "
         "provide responses for one string per question, or answers for multiple "
         "strings per question. When Codex presents options, send option labels "
         "exactly. 'respond' resolves a pending MCP elicitation request with "
@@ -146,15 +172,15 @@ CODEX_ACTION = {
         "properties": {
             "action": {
                 "type": "string",
-                "enum": ["reply", "answer", "respond"],
+                "enum": ["reply", "answer", "respond", "steer", "stop"],
             },
             "task_id": {
                 "type": "string",
-                "description": "Required task_id for reply/answer/respond.",
+                "description": "Required task_id for reply/answer/respond/steer/stop.",
             },
             "message": {
                 "type": "string",
-                "description": "Required for reply: the follow-up turn message to send.",
+                "description": "Required for reply or steer: the text message to send.",
             },
             "responses": {
                 "type": "array",

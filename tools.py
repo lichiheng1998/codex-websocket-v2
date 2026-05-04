@@ -7,6 +7,7 @@ from typing import Any
 
 from .codex_websocket_v2.core.session_registry import resolve_current_session
 from .codex_websocket_v2.surfaces.tool_actions import (
+    dispatch_remove_tool,
     dispatch_tool_action,
     error as _error,
     ok as _ok,
@@ -90,6 +91,13 @@ def codex_task(args: dict, **kwargs: Any) -> str:
 
 def codex_tasks(args: dict, **kwargs: Any) -> str:
     return _dispatch_action_tool("task", args)
+
+
+def codex_remove(args: dict, **kwargs: Any) -> str:
+    session, error = _resolve_session_or_error()
+    if error is not None:
+        return error
+    return dispatch_remove_tool(session, args)
 
 
 def codex_approval(args: dict, **kwargs: Any) -> str:

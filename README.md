@@ -81,13 +81,21 @@ Start a new coding task in a background Codex thread. Returns immediately with a
 Task policy values are fixed when the task is created. Later replies use the task's own `model`, `plan`, `sandbox_policy`, and `approval_policy`; changing session defaults affects only future tasks.
 
 ### `codex_tasks`
-List or archive tasks and threads in the current session.
+List tasks/threads or archive unbound server threads.
 
 | Action | Parameters | Description |
 |---|---|---|
 | `list` | `show_threads` | List session tasks (or all server threads) |
 | `show_pending` | `task_id` | Return the current pending request details for a task, if any |
-| `archive` | `target` | Archive a specific task (`task_id`), all session tasks (`all`), or every server thread (`allthreads`). Blocked if the thread is held by another active session. |
+| `archive` | `target` | Archive a specific unbound thread (`thread_id`), or every unbound server thread (`allthreads`). Bound threads are skipped or rejected. |
+
+### `codex_remove`
+Unbind task tracking in the current session without archiving server threads.
+
+| Parameters | Description |
+|---|---|
+| `task_id` | Remove a single task binding from this session |
+| `all` | Remove every task binding from this session |
 
 ### `codex_action`
 Send follow-up actions to existing tasks.
@@ -97,6 +105,8 @@ Send follow-up actions to existing tasks.
 | `reply` | `task_id`, `message` | Send a follow-up turn message to a running task |
 | `answer` | `task_id`, `responses[]` or `answers[][]` | Answer a `requestUserInput`; use `answers[][]` for multiple answers per question |
 | `respond` | `task_id`, `content` | Respond to a pending elicitation with form data matching its schema |
+| `steer` | `task_id`, `message` | Inject guidance into the current active turn |
+| `stop` | `task_id` | Interrupt the current active turn without archiving the task |
 
 ### `codex_approval`
 Resolve pending approval-style requests.
@@ -135,6 +145,8 @@ For scoped actions, omit `task_id` to operate on the session default; pass `task
 /codex                                        — list this session's tasks
 /codex list [--threads]                       — list tasks (or all server threads)
 /codex reply [task_id] [message]              — send a follow-up turn to Codex
+/codex steer [task_id] [message]              — steer the running turn
+/codex stop [task_id]                         — stop the running turn
 /codex answer [task_id] [answer]              — answer a single Codex question
 /codex answer [task_id] answer1 | answer2 | answer3   — answer multiple questions (separated by ' | ')
 /codex answer [task_id] [q1a|q1b] [q2a]      — multiple answers for individual questions
@@ -142,9 +154,10 @@ For scoped actions, omit `task_id` to operate on the session default; pass `task
 /codex approve --all [task_id]                — approve and stop prompting for similar commands this session
 /codex deny [task_id]                         — deny a pending request
 /codex pending [task_id]                      — show a task's pending request details
-/codex archive [task_id]                      — archive a specific task
-/codex archive --all                          — archive all tasks in this session
-/codex archive --threads                      — archive every thread on the server
+/codex archive [thread_id]                    — archive an unbound server thread
+/codex archive --all                          — archive every unbound server thread
+/codex remove [task_id]                       — unbind a task from this session
+/codex remove --all                           — unbind every task from this session
 /codex model [model_id]                     — show or set default model
 /codex model [task_id] [model_id]           — show or set a task's model
 /codex models                                 — list available models
@@ -171,7 +184,11 @@ For scoped actions, omit `task_id` to operate on the session default; pass `task
 | Module | Role |
 |---|---|
 | `__init__.py` | Plugin registration, main event loop capture |
-| `session.py` | `CodexSession` — per-session core (tasks and config) |
+| `session.py` | `CodexSession` composition root, lifecycle, handler-facing state hooks |
+| `session_tasks.py` | Task/thread operations: start, reply, steer/stop, revive, archive/remove |
+| `session_requests.py` | Approval, elicitation, and user-input responses |
+| `session_settings.py` | Model, mode, policy, verbosity, and status helpers |
+| `session_drive.py` | Fire-and-forget thread/turn start RPC flow |
 | `session_registry.py` | Global `{ platform:chat_id → CodexSession }` registry |
 | `transport/bridge.py` | `CodexBridge` — server lease, WebSocket connection, JSON-RPC pairing |
 | `transport/server_manager.py` | `CodexServerManager` — ref-counted app-server subprocess |

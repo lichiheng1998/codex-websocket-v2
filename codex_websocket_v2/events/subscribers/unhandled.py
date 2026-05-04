@@ -6,12 +6,23 @@ import json
 import logging
 from typing import TYPE_CHECKING
 
-from ..models import UnknownFrameEvent, UnknownNotificationEvent, UnknownRequestEvent
+from ..models import UnboundTaskEvent, UnknownFrameEvent, UnknownNotificationEvent, UnknownRequestEvent
 
 if TYPE_CHECKING:
     from ...core.session import CodexSession
 
 logger = logging.getLogger(__name__)
+
+
+class UnboundTaskSubscriber:
+    async def __call__(self, event: UnboundTaskEvent) -> bool:
+        logger.warning(
+            "codex handler: ignoring %s for unbound thread %s rpc_id=%r",
+            event.method,
+            event.thread_id,
+            event.rpc_id,
+        )
+        return True
 
 
 class UnhandledRequestSubscriber:

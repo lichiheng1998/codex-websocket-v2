@@ -1,7 +1,7 @@
 """Slash command handlers for /codex (WebSocket v2 — per-session).
 
-Subcommands: list [--threads], models, model, reply, answer, approve, deny,
-archive, plan, verbose, sandbox, status, help.
+Subcommands: list [--threads], models, model, reply, steer, stop, answer, approve,
+deny, archive, remove, plan, verbose, sandbox, status, help.
 
 Each subcommand parses argv with argparse, then delegates to a registered
 tool via ``_DISPATCH`` (wired by ``__init__.register()``). The tool's JSON
@@ -90,6 +90,13 @@ def _build_parser() -> argparse.ArgumentParser:
     reply_p.add_argument("task_id")
     reply_p.add_argument("message", nargs=argparse.REMAINDER)
 
+    steer_p = sub.add_parser("steer", add_help=True, help="steer the current turn")
+    steer_p.add_argument("task_id")
+    steer_p.add_argument("message", nargs=argparse.REMAINDER)
+
+    stop_p = sub.add_parser("stop", add_help=True, help="stop the current turn")
+    stop_p.add_argument("task_id")
+
     answer_p = sub.add_parser(
         "answer", add_help=True,
         help="answer a pending requestUserInput (separate multiple answers with ' | ')",
@@ -119,15 +126,18 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     pending_p.add_argument("task_id")
 
-    archive_p = sub.add_parser("archive", add_help=True, help="archive tasks or threads")
-    archive_p.add_argument("task_id", nargs="?", help="task_id to archive")
+    archive_p = sub.add_parser("archive", add_help=True, help="archive unbound server threads")
+    archive_p.add_argument("thread_id", nargs="?", help="thread_id to archive")
     archive_p.add_argument(
-        "--all", "-a", dest="all_tasks", action="store_true",
-        help="archive all tasks in this session",
+        "--all", "-a", dest="all_threads", action="store_true",
+        help="archive every unbound thread on the server",
     )
-    archive_p.add_argument(
-        "--threads", "-t", dest="all_threads", action="store_true",
-        help="archive every thread on the server",
+
+    remove_p = sub.add_parser("remove", add_help=True, help="unbind tasks from this session")
+    remove_p.add_argument("task_id", nargs="?", help="task_id to remove")
+    remove_p.add_argument(
+        "--all", "-a", dest="all_tasks", action="store_true",
+        help="remove all task bindings in this session",
     )
 
     plan_p = sub.add_parser("plan", add_help=True, help="show or toggle default/task plan mode")
@@ -187,6 +197,8 @@ def _cmd_help() -> str:
         "  `/codex model [model_id]` — set default model for this session\n"
         "  `/codex model [task_id] [model_id]` — show or set a task's model\n"
         "  `/codex reply [task_id] [message]` — send follow-up turn to Codex\n"
+        "  `/codex steer [task_id] [message]` — steer the running turn\n"
+        "  `/codex stop [task_id]` — stop the running turn\n"
         "  `/codex answer [task_id] [answer]` — answer a Codex question\n"
         "  `/codex answer [task_id] answer1 | answer2 | answer3` — answer multiple questions (separate with ' | ')\n"
         "  `/codex answer [task_id] [q1a|q1b] [q2a]` — multiple answers for individual questions\n"
@@ -195,9 +207,10 @@ def _cmd_help() -> str:
         "  `/codex deny [task_id]` — deny a pending Codex request\n"
         "  `/codex respond [task_id] [json]` — respond to an elicitation with schema data\n"
         "  `/codex pending [task_id]` — show a task's pending request details\n"
-        "  `/codex archive [task_id]` — archive a specific task\n"
-        "  `/codex archive --all` — archive all tasks in this session\n"
-        "  `/codex archive --threads` — archive every thread on the server\n"
+        "  `/codex archive [thread_id]` — archive an unbound server thread\n"
+        "  `/codex archive --all` — archive every unbound thread on the server\n"
+        "  `/codex remove [task_id]` — unbind a task from this session\n"
+        "  `/codex remove --all` — unbind every task in this session\n"
         "  `/codex plan [on|off]` — show or set default plan mode\n"
         "  `/codex plan [task_id] [on|off]` — show or set a task's plan mode\n"
         "  `/codex verbose off|mid|on` — set verbosity (off = last item + turn end; mid = agentMessage + turn end; on = all)\n"
@@ -403,33 +416,45 @@ def _cmd_pending(task_id: str) -> str:
 def _cmd_archive(ns: argparse.Namespace) -> str:
     if ns.all_threads:
         target = "allthreads"
-    elif ns.all_tasks:
-        target = "all"
-    elif ns.task_id:
-        target = ns.task_id
+    elif ns.thread_id:
+        target = ns.thread_id
     else:
-        return "Specify a task_id, --all, or --threads. Usage: `/codex archive [--all | --threads | task_id]`"
+        return "Specify a thread_id or --all. Usage: `/codex archive [--all | thread_id]`"
 
     result = _call("codex_tasks", {"action": "archive", "target": target})
     scope = result.get("scope")
 
     if scope == "allthreads":
         removed = result.get("removed", 0)
+        skipped = result.get("skipped") or []
         errors = result.get("errors") or []
         if result.get("ok"):
-            return f"Archived {removed} threads."
-        return f"Archived {removed}, failed: {', '.join(errors)}"
-
-    if scope == "all":
-        removed = result.get("removed", 0)
-        errors = result.get("errors") or []
-        if result.get("ok"):
-            return f"Archived {removed} tasks."
-        return f"Archived {removed}, failed: {', '.join(errors)}"
+            msg = f"Archived {removed} threads."
+            if skipped:
+                msg += f" Skipped {len(skipped)} bound threads."
+            return msg
+        return f"Archived {removed}, skipped {len(skipped)}, failed: {', '.join(errors)}"
 
     if result.get("ok"):
-        return f"Task `{target}` archived."
+        return f"Thread `{target}` archived."
     return f"Failed: {result.get('error', 'unknown error')}"
+
+
+def _cmd_remove(ns: argparse.Namespace) -> str:
+    if ns.all_tasks:
+        result = _call("codex_remove", {"all": True})
+    elif ns.task_id:
+        result = _call("codex_remove", {"task_id": ns.task_id})
+    else:
+        return "Specify a task_id or --all. Usage: `/codex remove [--all | task_id]`"
+
+    if not result.get("ok"):
+        return f"Failed: {result.get('error', 'unknown error')}"
+    if result.get("scope") == "all":
+        return f"Removed {result.get('removed', 0)} Codex tasks from this session."
+    task_id = result.get("task_id") or ns.task_id
+    thread_id = result.get("thread_id") or "?"
+    return f"Removed Codex task `{task_id}` from this session. Thread `{thread_id}` was not archived."
 
 
 _PLAN_ALIASES = {
@@ -505,6 +530,31 @@ def _cmd_reply(ns: argparse.Namespace) -> str:
     if not result.get("ok"):
         return f"Failed: {result.get('error', 'unknown error')}"
     return f"Message sent to Codex task `{task_id}`, waiting for reply..."
+
+
+def _cmd_steer(ns: argparse.Namespace) -> str:
+    task_id = ns.task_id
+    message = " ".join(ns.message).strip() if ns.message else ""
+    if not message:
+        return "Missing message. Usage: `/codex steer [task_id] [message]`"
+    result = _call("codex_action", {
+        "action": "steer",
+        "task_id": task_id,
+        "message": message,
+    })
+    if not result.get("ok"):
+        return f"Failed: {result.get('error', 'unknown error')}"
+    return f"Steered Codex task `{task_id}`."
+
+
+def _cmd_stop(task_id: str) -> str:
+    result = _call("codex_action", {
+        "action": "stop",
+        "task_id": task_id,
+    })
+    if not result.get("ok"):
+        return f"Failed: {result.get('error', 'unknown error')}"
+    return f"Stopped current turn for Codex task `{task_id}`."
 
 
 def _cmd_answer(ns: argparse.Namespace) -> str:
@@ -716,6 +766,9 @@ def handle_slash(raw_args: str) -> str:
     if ns.command == "archive":
         return _cmd_archive(ns)
 
+    if ns.command == "remove":
+        return _cmd_remove(ns)
+
     if ns.command == "plan":
         return _cmd_plan(ns.args)
 
@@ -733,6 +786,12 @@ def handle_slash(raw_args: str) -> str:
 
     if ns.command == "reply":
         return _cmd_reply(ns)
+
+    if ns.command == "steer":
+        return _cmd_steer(ns)
+
+    if ns.command == "stop":
+        return _cmd_stop(ns.task_id)
 
     if ns.command == "answer":
         return _cmd_answer(ns)

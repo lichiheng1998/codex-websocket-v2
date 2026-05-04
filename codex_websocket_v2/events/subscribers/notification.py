@@ -10,6 +10,7 @@ from ..models import (
     ItemStartedEvent,
     ServerRequestResolvedEvent,
     TurnCompletedEvent,
+    TurnStartedEvent,
 )
 
 if TYPE_CHECKING:
@@ -37,7 +38,13 @@ class NotificationSubscriber:
 
     async def __call__(
         self,
-        event: ItemStartedEvent | ItemCompletedEvent | TurnCompletedEvent | ServerRequestResolvedEvent,
+        event: (
+            ItemStartedEvent
+            | ItemCompletedEvent
+            | TurnStartedEvent
+            | TurnCompletedEvent
+            | ServerRequestResolvedEvent
+        ),
     ) -> bool:
         if isinstance(event, ItemStartedEvent):
             if event.task is not None:
@@ -46,6 +53,10 @@ class NotificationSubscriber:
         if isinstance(event, ItemCompletedEvent):
             if event.task is not None:
                 await self._safe(self._item_completed(event))
+            return True
+        if isinstance(event, TurnStartedEvent):
+            if event.task is not None:
+                self._turn_started(event)
             return True
         if isinstance(event, TurnCompletedEvent):
             if event.task is not None:
@@ -148,11 +159,19 @@ class NotificationSubscriber:
     async def _context_compaction(self, task: "Task", item: Any) -> None:
         await self.session.notify(f"🗜️ `{task.task_id}` context compacted")
 
+    def _turn_started(self, event: TurnStartedEvent) -> None:
+        turn_id = getattr(event.turn, "id", "") or ""
+        if turn_id:
+            event.task.active_turn_id = turn_id
+
     async def _turn_completed(self, event: TurnCompletedEvent) -> None:
         task = event.task
         turn = event.turn
         status = event.status
         task.last_turn_status = status
+        turn_id = getattr(turn, "id", "") or ""
+        if turn_id and task.active_turn_id == turn_id:
+            task.active_turn_id = ""
 
         if self.session.verbose == "off" and task.last_item is not None:
             await self._show_last_item(task)

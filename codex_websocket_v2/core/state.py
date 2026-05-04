@@ -49,6 +49,7 @@ class Task:
     approval_policy: str
     thread_status: str = ""
     last_turn_status: str = ""
+    active_turn_id: str = ""
 
     # The single in-flight server→client request, if any.
     # request_type: "command" | "elicitation" | "input"
