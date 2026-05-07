@@ -30,12 +30,56 @@ def register(ctx) -> None:
     except RuntimeError:
         pass
 
+    import logging as _log
+    _logger = _log.getLogger(__name__)
+
+    def _propagate_loop_to_sessions(loop) -> None:
+        """Push loop to any existing sessions that don't have one yet."""
+        try:
+            from .codex_websocket_v2.core import session_registry
+            for session in session_registry.all_sessions():
+                if session.gateway_loop is None:
+                    session.gateway_loop = loop
+                    _logger.info(
+                        "codex: [loop-capture] gateway loop propagated to existing session"
+                        " session=%s loop_id=%s",
+                        session.session_key,
+                        id(loop),
+                    )
+        except Exception:
+            pass
+
+    def _capture_gateway_loop(**kwargs) -> None:
+        """Capture the hermes main loop on every inbound gateway message.
+
+        ``pre_gateway_dispatch`` fires on the gateway's async loop for every
+        incoming platform message — reliable in gateway mode where
+        ``pre_tool_call`` is never triggered.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        if notify._MAIN_LOOP is loop:
+            return  # already captured, skip the propagation scan
+        notify.set_main_loop(loop)
+        _propagate_loop_to_sessions(loop)
+
     def _capture_loop_before_codex_tool(**kwargs) -> None:
+        """Secondary capture for CLI mode where pre_gateway_dispatch never fires."""
         tool_name = str(kwargs.get("tool_name") or "")
         if not tool_name.startswith("codex_"):
             return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        if notify._MAIN_LOOP is loop:
+            return
         notify.capture_current_loop(f"pre_tool_call:{tool_name}")
+        _propagate_loop_to_sessions(loop)
 
+    ctx.register_hook("pre_gateway_dispatch", _capture_gateway_loop)
     ctx.register_hook("pre_tool_call", _capture_loop_before_codex_tool)
 
     ctx.register_tool(

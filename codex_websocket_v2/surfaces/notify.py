@@ -26,6 +26,7 @@ import asyncio
 import inspect
 import logging
 import re
+import threading
 from typing import Optional
 
 from ..core.state import TaskTarget
@@ -52,6 +53,12 @@ def set_main_loop(loop: Optional[asyncio.AbstractEventLoop]) -> None:
     if loop is None:
         return
     _MAIN_LOOP = loop
+    logger.info(
+        "codex notify: [loop-capture] global main loop set loop_id=%s thread=%s running=%s",
+        id(loop),
+        threading.current_thread().name,
+        loop.is_running(),
+    )
 
 
 def capture_current_loop(reason: str = "") -> None:
@@ -71,24 +78,39 @@ def capture_current_loop(reason: str = "") -> None:
     )
 
 
-async def _send_via_main_loop(coro_factory) -> None:
-    """Schedule ``coro_factory()`` on the hermes main loop and await its result."""
+async def _send_via_main_loop(
+    coro_factory,
+    *,
+    gateway_loop: Optional[asyncio.AbstractEventLoop] = None,
+) -> None:
+    """Schedule ``coro_factory()`` on the hermes main loop and await its result.
+
+    ``gateway_loop`` is the per-session loop reference (Option B); falls back to
+    the global ``_MAIN_LOOP`` captured at tool-call time.
+    """
     try:
         current = asyncio.get_running_loop()
     except RuntimeError:
         current = None
 
-    if _MAIN_LOOP is not None and current is not _MAIN_LOOP and _MAIN_LOOP.is_running():
-        logger.info("codex notify: dispatching to main loop via run_coroutine_threadsafe")
-        future = asyncio.run_coroutine_threadsafe(coro_factory(), _MAIN_LOOP)
+    main_loop = gateway_loop or _MAIN_LOOP
+    if main_loop is not None and current is not main_loop and main_loop.is_running():
+        logger.info(
+            "codex notify: dispatching to main loop via run_coroutine_threadsafe"
+            " (session_loop=%s global_loop=%s use_loop=%s)",
+            id(gateway_loop) if gateway_loop else None,
+            id(_MAIN_LOOP) if _MAIN_LOOP else None,
+            id(main_loop),
+        )
+        future = asyncio.run_coroutine_threadsafe(coro_factory(), main_loop)
         return await asyncio.wrap_future(future)
 
     logger.info(
-        "codex notify: direct send "
-        "(main_loop_set=%s, on_main_loop=%s, main_loop_running=%s)",
-        _MAIN_LOOP is not None,
-        current is _MAIN_LOOP if _MAIN_LOOP is not None else None,
-        _MAIN_LOOP.is_running() if _MAIN_LOOP is not None else None,
+        "codex notify: direct send"
+        " (session_loop=%s global_loop=%s current=%s)",
+        id(gateway_loop) if gateway_loop else None,
+        id(_MAIN_LOOP) if _MAIN_LOOP else None,
+        id(current) if current else None,
     )
     return await coro_factory()
 
@@ -196,8 +218,17 @@ async def _deliver_notify_on_gateway(target: TaskTarget, message: str) -> None:
         logger.warning("codex notify failed: %s", exc)
 
 
-async def notify_user(target: Optional[TaskTarget], message: str) -> None:
+async def notify_user(
+    target: Optional[TaskTarget],
+    message: str,
+    *,
+    gateway_loop: Optional[asyncio.AbstractEventLoop] = None,
+) -> None:
     """Best-effort push to the chat platform identified by ``target``.
+
+    ``gateway_loop`` is the per-session hermes loop reference; used by
+    ``_send_via_main_loop`` to route the send to the correct event loop when
+    called from the bridge loop.
 
     Returns silently on every failure path; callers are background driver
     coroutines that have nowhere to surface the error to anyway.
@@ -246,13 +277,15 @@ async def notify_user(target: Optional[TaskTarget], message: str) -> None:
         thread_id = target.thread_id or None
         if platform == Platform.TELEGRAM:
             await _send_via_main_loop(
-                lambda: _send_telegram_direct(pconfig, chat_id, message, thread_id)
+                lambda: _send_telegram_direct(pconfig, chat_id, message, thread_id),
+                gateway_loop=gateway_loop,
             )
         else:
             await _send_via_main_loop(
                 lambda: _send_to_platform(
                     platform, pconfig, chat_id, message, thread_id=thread_id,
-                )
+                ),
+                gateway_loop=gateway_loop,
             )
 
         # Mirror the same text into the hermes session transcript so the

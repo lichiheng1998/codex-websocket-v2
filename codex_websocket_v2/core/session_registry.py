@@ -44,6 +44,19 @@ def get_or_create(session_key: str, target: TaskTarget) -> CodexSession:
         session = _sessions.get(session_key)
         if session is None:
             session = CodexSession(session_key=session_key, target=target)
+            # Seed gateway_loop from whatever has already been captured globally.
+            try:
+                from ..surfaces.notify import _MAIN_LOOP
+                if _MAIN_LOOP is not None:
+                    session.gateway_loop = _MAIN_LOOP
+                    logger.info(
+                        "codex session: [loop-capture] gateway loop seeded at creation"
+                        " session=%s loop_id=%s",
+                        session_key,
+                        id(_MAIN_LOOP),
+                    )
+            except Exception:
+                pass
             _sessions[session_key] = session
         else:
             # Refresh target — chat metadata may have changed (e.g. thread_id).
