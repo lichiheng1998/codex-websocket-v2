@@ -48,7 +48,6 @@ class CodexBridge:
         self.loop_thread: Optional[threading.Thread] = None
 
         self._next_id = 1
-        self._id_lock = threading.Lock()
         self._connect_lock = threading.Lock()
         self._pending_rpc: Dict[int, asyncio.Future] = {}
         self._handler = None  # set in connect()
@@ -190,10 +189,9 @@ class CodexBridge:
     # ── Internal ─────────────────────────────────────────────────────────────
 
     def _next_rpc_id(self) -> int:
-        with self._id_lock:
-            rpc_id = self._next_id
-            self._next_id += 1
-            return rpc_id
+        rpc_id = self._next_id
+        self._next_id += 1
+        return rpc_id
 
     def _start_loop_thread(self) -> Result:
         if self.loop is not None:

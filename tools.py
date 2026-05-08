@@ -1,4 +1,8 @@
-"""Tool handlers for the codex-websocket-v2 plugin."""
+"""Tool handlers for the codex-websocket-v2 plugin.
+
+All tool calls go through the ActionEventBus: create a typed event, submit
+to the serial queue, and wait for the result future.
+"""
 
 from __future__ import annotations
 
@@ -7,14 +11,13 @@ from typing import Any
 
 from .codex_websocket_v2.core.session_registry import resolve_current_session
 from .codex_websocket_v2.surfaces.tool_actions import (
-    dispatch_remove_tool,
-    dispatch_tool_action,
     error as _error,
     ok as _ok,
     optional_str as _optional_str,
-    tool_error_from_result as _tool_error_from_result,
     validate_plan as _validate_plan,
 )
+
+_RESULT_TIMEOUT = 60
 
 
 def _resolve_session_or_error():
@@ -24,25 +27,39 @@ def _resolve_session_or_error():
         return None, _error(f"hermes runtime unavailable: {exc}")
 
 
-def _dispatch_action_tool(map_name: str, args: dict) -> str:
-    action = (args.get("action") or "").strip()
-    if not action:
-        return _error("action is required")
+def _submit_and_wait(session, event) -> str:
+    """Submit an action event and wait for the result."""
+    session.action_bus.submit(event)
+    try:
+        result = event.result_future.result(timeout=_RESULT_TIMEOUT)
+    except Exception as exc:
+        return _error(f"action failed: {exc}")
+    if not result.get("ok"):
+        return _error(result.get("error", "unknown error"))
+    return _ok(**{k: v for k, v in result.items() if k != "ok"})
 
-    session, error = _resolve_session_or_error()
-    if error is not None:
-        return error
-    return dispatch_tool_action(map_name, session, action, args)
+
+def _submit_and_wait_custom(session, event, *, extra_ok: dict | None = None) -> str:
+    """Submit, wait, and merge extra fields into the ok response."""
+    session.action_bus.submit(event)
+    try:
+        result = event.result_future.result(timeout=_RESULT_TIMEOUT)
+    except Exception as exc:
+        return _error(f"action failed: {exc}")
+    if not result.get("ok"):
+        return _error(result.get("error", "unknown error"))
+    data = {k: v for k, v in result.items() if k != "ok"}
+    if extra_ok:
+        data.update(extra_ok)
+    return _ok(**data)
+
+
+# ── codex_task ──────────────────────────────────────────────────────────────
 
 
 def codex_task(args: dict, **kwargs: Any) -> str:
     cwd = args.get("cwd", "")
     prompt = args.get("prompt", "")
-    approval_policy = _optional_str(args, "approval_policy")
-    sandbox_policy = _optional_str(args, "sandbox_policy")
-    model = _optional_str(args, "model")
-    plan = _optional_str(args, "plan")
-    base_instructions = args.get("base_instructions")
 
     if not cwd or not os.path.isabs(cwd):
         return _error("cwd must be an absolute path")
@@ -50,26 +67,26 @@ def codex_task(args: dict, **kwargs: Any) -> str:
         return _error(f"cwd does not exist or is not a directory: {cwd}")
     if not prompt or not prompt.strip():
         return _error("prompt is required")
+
+    plan = _optional_str(args, "plan")
     try:
         plan = _validate_plan(plan)
     except ValueError as exc:
         return _error(str(exc))
+    args["plan"] = plan
 
     session, error = _resolve_session_or_error()
     if error is not None:
         return error
 
-    result = session.start_task(
-        cwd=cwd,
-        prompt=prompt.strip(),
-        model=model,
-        plan=plan,
-        approval_policy=approval_policy,
-        sandbox_policy=sandbox_policy,
-        base_instructions=base_instructions,
-    )
-    if not result["ok"]:
-        return _error(f"codex session error: {result['error']}")
+    event = session.action_factory.create("codex_task", args)
+    session.action_bus.submit(event)
+    try:
+        result = event.result_future.result(timeout=_RESULT_TIMEOUT)
+    except Exception as exc:
+        return _error(f"action failed: {exc}")
+    if not result.get("ok"):
+        return _error(result.get("error", "unknown error"))
 
     task_id = result["task_id"]
     return _ok(
@@ -89,31 +106,125 @@ def codex_task(args: dict, **kwargs: Any) -> str:
     )
 
 
+# ── codex_tasks ─────────────────────────────────────────────────────────────
+
+
 def codex_tasks(args: dict, **kwargs: Any) -> str:
-    return _dispatch_action_tool("task", args)
+    action = (args.get("action") or "").strip()
+    if not action:
+        return _error("action is required")
+    session, error = _resolve_session_or_error()
+    if error is not None:
+        return error
+    event = session.action_factory.create("codex_tasks", args)
+    return _submit_and_wait(session, event)
+
+
+# ── codex_remove ────────────────────────────────────────────────────────────
 
 
 def codex_remove(args: dict, **kwargs: Any) -> str:
     session, error = _resolve_session_or_error()
     if error is not None:
         return error
-    return dispatch_remove_tool(session, args)
+    event = session.action_factory.create("codex_remove", args)
+    return _submit_and_wait(session, event)
+
+
+# ── codex_approval ──────────────────────────────────────────────────────────
 
 
 def codex_approval(args: dict, **kwargs: Any) -> str:
-    return _dispatch_action_tool("approval", args)
+    action = (args.get("action") or "").strip()
+    if not action:
+        return _error("action is required")
+    session, error = _resolve_session_or_error()
+    if error is not None:
+        return error
+    event = session.action_factory.create("codex_approval", args)
+    session.action_bus.submit(event)
+    try:
+        result = event.result_future.result(timeout=_RESULT_TIMEOUT)
+    except Exception as exc:
+        return _error(f"action failed: {exc}")
+    if not result.get("ok"):
+        return _error(result.get("error", "unknown error"))
+
+    task_id = result.get("task_id", args.get("task_id", ""))
+    decision = result.get("decision", action)
+    for_session = bool(args.get("for_session"))
+    if action == "approve" and for_session:
+        decision = "acceptForSession"
+    return _ok(task_id=task_id, decision=decision)
+
+
+# ── codex_action ────────────────────────────────────────────────────────────
 
 
 def codex_action(args: dict, **kwargs: Any) -> str:
-    return _dispatch_action_tool("action", args)
+    action = (args.get("action") or "").strip()
+    if not action:
+        return _error("action is required")
+    session, error = _resolve_session_or_error()
+    if error is not None:
+        return error
+    event = session.action_factory.create("codex_action", args)
+    return _submit_and_wait(session, event)
+
+
+# ── codex_models ────────────────────────────────────────────────────────────
 
 
 def codex_models(args: dict, **kwargs: Any) -> str:
-    return _dispatch_action_tool("model", args)
+    action = (args.get("action") or "").strip()
+    if not action:
+        return _error("action is required")
+    session, error = _resolve_session_or_error()
+    if error is not None:
+        return error
+    event = session.action_factory.create("codex_models", args)
+    session.action_bus.submit(event)
+    try:
+        result = event.result_future.result(timeout=_RESULT_TIMEOUT)
+    except Exception as exc:
+        return _error(f"action failed: {exc}")
+    if not result.get("ok"):
+        return _error(result.get("error", "unknown error"))
+
+    if action == "list":
+        return _ok(
+            models=result.get("data") or [],
+            current=session.get_default_model(),
+        )
+    return _ok(**{k: v for k, v in result.items() if k != "ok"})
 
 
-def codex_session(args: dict, **kwargs: Any) -> str:
-    return _dispatch_action_tool("session", args)
+# ── codex_session ───────────────────────────────────────────────────────────
+
+
+def codex_session_tool(args: dict, **kwargs: Any) -> str:
+    action = (args.get("action") or "").strip()
+    if not action:
+        return _error("action is required")
+    session, error = _resolve_session_or_error()
+    if error is not None:
+        return error
+    event = session.action_factory.create("codex_session", args)
+    session.action_bus.submit(event)
+    try:
+        result = event.result_future.result(timeout=_RESULT_TIMEOUT)
+    except Exception as exc:
+        return _error(f"action failed: {exc}")
+    if not result.get("ok"):
+        return _error(result.get("error", "unknown error"))
+
+    data = {k: v for k, v in result.items() if k != "ok"}
+    if action == "status" and not args.get("task_id"):
+        data["session_key"] = session.session_key
+    return _ok(**data)
+
+
+# ── codex_revive ────────────────────────────────────────────────────────────
 
 
 def codex_revive(args: dict, **kwargs: Any) -> str:
@@ -121,28 +232,26 @@ def codex_revive(args: dict, **kwargs: Any) -> str:
     if not thread_id:
         return _error("thread_id is required")
 
-    approval_policy = _optional_str(args, "approval_policy")
-    sandbox_policy = _optional_str(args, "sandbox_policy")
-    model = _optional_str(args, "model")
     plan = _optional_str(args, "plan")
     try:
         plan = _validate_plan(plan)
     except ValueError as exc:
         return _error(str(exc))
+    args["plan"] = plan
 
     session, error = _resolve_session_or_error()
     if error is not None:
         return error
 
-    result = session.revive_task(
-        thread_id,
-        model=model,
-        plan=plan,
-        sandbox_policy=sandbox_policy,
-        approval_policy=approval_policy,
-    )
-    if error := _tool_error_from_result(result):
-        return error
+    event = session.action_factory.create("codex_revive", args)
+    session.action_bus.submit(event)
+    try:
+        result = event.result_future.result(timeout=_RESULT_TIMEOUT)
+    except Exception as exc:
+        return _error(f"action failed: {exc}")
+    if not result.get("ok"):
+        return _error(result.get("error", "unknown error"))
+
     return _ok(
         task_id=result["task_id"],
         thread_id=result["thread_id"],

@@ -247,7 +247,9 @@ def _tasks_approve(session, args: dict) -> str:
     if result_error is not None:
         return result_error
     for_session = bool(args.get("for_session"))
-    result = session.approve_task(task_id, "accept", for_session=for_session)
+    result = session.bridge.run_sync(
+        session.approve_task(task_id, "accept", for_session=for_session)
+    )
     if result_error := tool_error_from_result(result):
         return result_error
     return ok(
@@ -262,7 +264,9 @@ def _tasks_deny(session, args: dict) -> str:
     )
     if result_error is not None:
         return result_error
-    result = session.approve_task(task_id, "decline", for_session=False)
+    result = session.bridge.run_sync(
+        session.approve_task(task_id, "decline", for_session=False)
+    )
     if result_error := tool_error_from_result(result):
         return result_error
     return ok(task_id=task_id, decision="decline")
@@ -275,7 +279,7 @@ def _tasks_respond(session, args: dict) -> str:
     if result_error is not None:
         return result_error
     content = args.get("content")  # dict or None
-    result = session.respond_task(task_id, content)
+    result = session.bridge.run_sync(session.respond_task(task_id, content))
     if result_error := tool_error_from_result(result):
         return result_error
     return ok(task_id=task_id, decision="respond")

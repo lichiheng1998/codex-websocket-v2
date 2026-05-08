@@ -7,7 +7,7 @@ from typing import Any, Optional
 
 from ..transport import wire
 from .policies import RPC_TIMEOUT
-from .provider import known_ids_from_listing, list_models_for
+from .provider import known_ids_from_listing, list_models_for, list_models_for_async
 from .state import Result, Task, err, ok
 
 logger = logging.getLogger(__name__)
@@ -48,11 +48,19 @@ class SessionSettingsMixin:
         return err(f"invalid plan {plan!r}; use on/off")
 
     def _validate_model_id(self, model: str) -> Result:
+        """Validate model id format. Does NOT check against provider list (use async version)."""
+        normalized = (model or "").strip()
+        if not normalized:
+            return err("model id is required")
+        return ok(model=normalized)
+
+    async def _validate_model_id_async(self, model: str) -> Result:
+        """Validate model id and soft-check against provider list."""
         normalized = (model or "").strip()
         if not normalized:
             return err("model id is required")
 
-        listed = self.list_models(include_hidden=True)
+        listed = await self.list_models(include_hidden=True)
         if listed["ok"]:
             available = known_ids_from_listing(listed)
             if available and normalized not in available:
@@ -143,7 +151,7 @@ class SessionSettingsMixin:
         self.default_model = validated["model"]
         return ok(model=self.default_model)
 
-    def get_model(self, task_id: Optional[str] = None) -> Result:
+    async def get_model(self, task_id: Optional[str] = None) -> Result:
         task, error = self._task_or_error(task_id)
         if error is not None:
             return error
@@ -151,11 +159,11 @@ class SessionSettingsMixin:
             return ok(scope="task", task_id=task_id, model=self._task_model(task))
         return ok(scope="default", model=self.default_model)
 
-    def set_model(self, model: str, task_id: Optional[str] = None) -> Result:
+    async def set_model(self, model: str, task_id: Optional[str] = None) -> Result:
         task, error = self._task_or_error(task_id)
         if error is not None:
             return error
-        validated = self._validate_model_id(model)
+        validated = await self._validate_model_id_async(model)
         if not validated["ok"]:
             return validated
         if task is not None:
@@ -164,17 +172,15 @@ class SessionSettingsMixin:
         self.default_model = validated["model"]
         return ok(scope="default", model=self.default_model)
 
-    def list_models(
+    async def list_models(
         self,
         *,
         include_hidden: bool = False,
         limit: Optional[int] = None,
     ) -> Result:
-        started = self.ensure_started()
-        if not started["ok"]:
-            return started
-        return list_models_for(
-            self._provider, self.bridge.run_sync, self.bridge.rpc,
+        await self.ensure_started_async()
+        return await list_models_for_async(
+            self._provider, self.bridge.rpc,
             include_hidden=include_hidden, limit=limit,
         )
 
@@ -187,7 +193,7 @@ class SessionSettingsMixin:
         self.mode = mode
         return ok(mode=mode)
 
-    def get_plan(self, task_id: Optional[str] = None) -> Result:
+    async def get_plan(self, task_id: Optional[str] = None) -> Result:
         task, error = self._task_or_error(task_id)
         if error is not None:
             return error
@@ -198,7 +204,7 @@ class SessionSettingsMixin:
         plan = self.mode == "plan"
         return ok(scope="default", plan=self._plan_label(plan), mode=self.mode)
 
-    def set_plan(self, plan: Any, task_id: Optional[str] = None) -> Result:
+    async def set_plan(self, plan: Any, task_id: Optional[str] = None) -> Result:
         task, error = self._task_or_error(task_id)
         if error is not None:
             return error
@@ -212,7 +218,7 @@ class SessionSettingsMixin:
         self.mode = "plan" if parsed["plan"] else "default"
         return ok(scope="default", plan=self._plan_label(parsed["plan"]), mode=self.mode)
 
-    def get_sandbox_policy(self, task_id: Optional[str] = None) -> Any:
+    async def get_sandbox_policy(self, task_id: Optional[str] = None) -> Any:
         task, error = self._task_or_error(task_id)
         if error is not None:
             return error
@@ -221,7 +227,7 @@ class SessionSettingsMixin:
                       sandbox_policy=self._task_sandbox_policy(task))
         return self.sandbox_policy
 
-    def set_sandbox_policy(self, policy: str, task_id: Optional[str] = None) -> Result:
+    async def set_sandbox_policy(self, policy: str, task_id: Optional[str] = None) -> Result:
         task, error = self._task_or_error(task_id)
         if error is not None:
             return error
@@ -234,7 +240,7 @@ class SessionSettingsMixin:
         self.sandbox_policy = policy
         return ok(scope="default", sandbox_policy=policy)
 
-    def get_approval_policy(self, task_id: Optional[str] = None) -> Result:
+    async def get_approval_policy(self, task_id: Optional[str] = None) -> Result:
         task, error = self._task_or_error(task_id)
         if error is not None:
             return error
@@ -243,7 +249,7 @@ class SessionSettingsMixin:
                       approval_policy=self._task_approval_policy(task))
         return ok(scope="default", approval_policy=self.approval_policy)
 
-    def set_approval_policy(self, policy: str, task_id: Optional[str] = None) -> Result:
+    async def set_approval_policy(self, policy: str, task_id: Optional[str] = None) -> Result:
         task, error = self._task_or_error(task_id)
         if error is not None:
             return error
@@ -265,9 +271,9 @@ class SessionSettingsMixin:
         self.verbose = level
         return ok(verbose=self.verbose)
 
-    def get_status(self, task_id: Optional[str] = None) -> Result:
+    async def get_status(self, task_id: Optional[str] = None) -> Result:
         if task_id:
-            return self.get_task_status(task_id)
+            return await self.get_task_status(task_id)
 
         connected = self.bridge.is_connected() if self.bridge else False
         active_tasks = len(self.tasks)
@@ -275,7 +281,7 @@ class SessionSettingsMixin:
         total_threads = active_tasks
         if connected:
             try:
-                listed = self.list_threads()
+                listed = await self.list_threads()
                 if listed.get("ok"):
                     total_threads = len(listed.get("data", []))
             except Exception:
@@ -293,7 +299,7 @@ class SessionSettingsMixin:
             approval_policy=self.approval_policy,
         )
 
-    def get_task_status(self, task_id: str) -> Result:
+    async def get_task_status(self, task_id: str) -> Result:
         task = self.tasks.get(task_id)
         if task is None:
             return err(f"unknown task id {task_id!r}")
@@ -303,12 +309,10 @@ class SessionSettingsMixin:
         connected = self.bridge.is_connected() if self.bridge else False
         if connected:
             try:
-                read = self.bridge.run_sync(
-                    self.bridge.rpc(
-                        "thread/read",
-                        wire.ThreadReadParams(threadId=task.thread_id),
-                        timeout=RPC_TIMEOUT,
-                    ),
+                read = await self.bridge.rpc(
+                    "thread/read",
+                    wire.ThreadReadParams(threadId=task.thread_id),
+                    timeout=RPC_TIMEOUT,
                 )
                 if read.get("ok"):
                     thread = (read.get("result") or {}).get("thread") or {}

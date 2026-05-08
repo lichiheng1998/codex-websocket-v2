@@ -13,6 +13,8 @@ import logging
 import threading
 from typing import Any, Dict, Optional
 
+from ..events.action_bus import ActionEventBus
+from ..events.action_factory import ActionFactory
 from ..events.bus import EventBus
 from ..surfaces.notify import notify_user
 from ..transport.bridge import CodexBridge
@@ -58,6 +60,53 @@ class CodexSession(
         self.bridge: CodexBridge = CodexBridge(session=self)
         self._start_lock = threading.Lock()
 
+        # Action event bus — serial queue for outbound tool calls
+        self.action_bus = ActionEventBus(self.event_bus)
+        self.action_factory = ActionFactory(self)
+        self._register_action_subscribers()
+
+    # ── Action subscriber registration ────────────────────────────────────────
+
+    def _register_action_subscribers(self) -> None:
+        from ..events.action_models import (
+            AnswerActionEvent, ApproveActionEvent, ArchiveActionEvent,
+            DenyActionEvent, GetApprovalActionEvent, GetModelActionEvent,
+            GetPlanActionEvent, GetSandboxActionEvent, GetVerboseActionEvent,
+            ListModelsActionEvent, ListTasksActionEvent, QueryStatusActionEvent,
+            RemoveActionEvent, ReplyActionEvent, RespondActionEvent,
+            ReviveActionEvent, SetApprovalActionEvent, SetModelActionEvent,
+            SetPlanActionEvent, SetSandboxActionEvent, SetVerboseActionEvent,
+            ShowPendingActionEvent, StartTaskActionEvent, SteerActionEvent,
+            StopActionEvent,
+        )
+        from ..events.subscribers.task_actions import TaskActionSubscriber
+        from ..events.subscribers.approval_actions import ApprovalActionSubscriber
+        from ..events.subscribers.settings_actions import SettingsActionSubscriber
+        from ..events.subscribers.query_actions import QueryActionSubscriber
+
+        task_sub = TaskActionSubscriber(self)
+        for cls in (StartTaskActionEvent, ReplyActionEvent, SteerActionEvent,
+                    StopActionEvent, ReviveActionEvent, RemoveActionEvent):
+            self.event_bus.subscribe(cls, task_sub)
+
+        approval_sub = ApprovalActionSubscriber(self)
+        for cls in (ApproveActionEvent, DenyActionEvent, AnswerActionEvent,
+                    RespondActionEvent):
+            self.event_bus.subscribe(cls, approval_sub)
+
+        settings_sub = SettingsActionSubscriber(self)
+        for cls in (SetModelActionEvent, GetModelActionEvent, SetPlanActionEvent,
+                    GetPlanActionEvent, SetVerboseActionEvent, GetVerboseActionEvent,
+                    SetSandboxActionEvent, GetSandboxActionEvent,
+                    SetApprovalActionEvent, GetApprovalActionEvent):
+            self.event_bus.subscribe(cls, settings_sub)
+
+        query_sub = QueryActionSubscriber(self)
+        for cls in (ListTasksActionEvent, ListModelsActionEvent,
+                    QueryStatusActionEvent, ShowPendingActionEvent,
+                    ArchiveActionEvent):
+            self.event_bus.subscribe(cls, query_sub)
+
     # ── Lifecycle ────────────────────────────────────────────────────────────
 
     def ensure_started(self) -> Result:
@@ -77,6 +126,33 @@ class CodexSession(
                     self.default_model = sync["model"]
                 else:
                     logger.warning("codex session: failed to sync default model: %s", sync["error"])
+
+            # Start action bus consumer on the bridge loop
+            self.bridge.run_sync(self.action_bus.start_consumer(), timeout=STARTUP_TIMEOUT)
+
+            return ok()
+
+    async def ensure_started_async(self) -> Result:
+        """Async version of ensure_started — for subscribers on the bridge loop."""
+        if self.bridge.is_connected():
+            return ok()
+        with self._start_lock:
+            if self.bridge.is_connected():
+                return ok()
+
+            connect = self.bridge.ensure_connected()
+            if not connect["ok"]:
+                return connect
+
+            if connect.get("connected"):
+                sync = await self._sync_config_from_server()
+                if sync["ok"]:
+                    self.default_model = sync["model"]
+                else:
+                    logger.warning("codex session: failed to sync default model: %s", sync["error"])
+
+            # Start action bus consumer on the bridge loop
+            await self.action_bus.start_consumer()
 
             return ok()
 

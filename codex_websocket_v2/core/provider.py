@@ -220,3 +220,48 @@ def known_ids_from_listing(listed: Result) -> "set[str]":
     return ids
 
 
+async def list_models_for_async(
+    provider: ProviderInfo,
+    rpc: RpcCallable,
+    *,
+    include_hidden: bool = False,
+    limit: Optional[int] = None,
+) -> Result:
+    """Async version of ``list_models_for`` — directly awaits ``rpc()``.
+
+    Used by subscribers running on the bridge loop where ``run_sync``
+    would deadlock.
+    """
+    if provider.has_base_url():
+        direct = fetch_provider_models_http(provider.base_url, provider.env_key)
+        if direct["ok"]:
+            return direct
+        logger.warning(
+            "codex bridge: provider /v1/models fetch failed (%s); falling back to model/list",
+            direct.get("error"),
+        )
+
+    cursor = None
+    models: list = []
+    while True:
+        rpc_result = await rpc(
+            "model/list",
+            wire.ModelListParams(
+                cursor=cursor,
+                includeHidden=include_hidden or None,
+                limit=limit,
+            ),
+            timeout=RPC_TIMEOUT,
+        )
+        if not rpc_result["ok"]:
+            return rpc_result
+
+        payload = rpc_result["result"] or {}
+        models.extend(payload.get("data") or [])
+        cursor = payload.get("nextCursor")
+        if not cursor:
+            break
+
+    return ok(data=models)
+
+

@@ -135,7 +135,7 @@ def register(ctx) -> None:
         name="codex_session",
         toolset="codex_bridge",
         schema=schemas.CODEX_SESSION,
-        handler=tools.codex_session,
+        handler=tools.codex_session_tool,
         check_fn=_codex_available,
     )
 
