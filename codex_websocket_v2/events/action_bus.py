@@ -1,38 +1,67 @@
-"""Queue-based action event bus with serial consumer.
+"""Global serial action event bus.
 
-Action events (from tools.py) are submitted via ``submit()`` from any thread.
-A consumer coroutine on the bridge loop drains the queue and publishes each
-event on the session's EventBus, where typed subscribers handle them.
+All tool calls across all sessions go through a single queue.  The bus owns
+a dedicated loop thread; consumers dispatch each event to its session's
+``EventBus`` where typed subscribers handle the actual work.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Optional
-
-if TYPE_CHECKING:
-    from .bus import EventBus
+import threading
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+_LOOP_READY_TIMEOUT = 5.0
+
 
 class ActionEventBus:
-    """Async queue + consumer that dispatches action events via EventBus."""
+    """Single queue + consumer shared by all sessions."""
 
-    def __init__(self, event_bus: "EventBus") -> None:
-        self._event_bus = event_bus
+    def __init__(self) -> None:
         self._queue: asyncio.Queue = asyncio.Queue(maxsize=256)
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._loop_thread: Optional[threading.Thread] = None
         self._consumer: Optional[asyncio.Task] = None
+        self._started = threading.Event()
 
-    async def start_consumer(self) -> None:
-        """Start the drain loop. Call from the bridge loop after it's running."""
-        if self._consumer is not None and not self._consumer.done():
+    # ── Lifecycle ────────────────────────────────────────────────────────
+
+    def start(self) -> None:
+        """Start the loop thread and consumer.  Idempotent."""
+        if self._started.is_set():
             return
-        self._consumer = asyncio.create_task(
-            self._consume_loop(),
-            name="action-bus-consumer",
+        loop_ready = threading.Event()
+
+        def _run():
+            self._loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self._loop)
+            self._consumer = self._loop.create_task(
+                self._consume_loop(),
+                name="action-bus-consumer",
+            )
+            loop_ready.set()
+            self._loop.run_forever()
+
+        self._loop_thread = threading.Thread(
+            target=_run, name="action-bus-loop", daemon=True,
         )
+        self._loop_thread.start()
+        if not loop_ready.wait(timeout=_LOOP_READY_TIMEOUT):
+            raise RuntimeError("action bus loop failed to start")
+        self._started.set()
+
+    # ── Submit ───────────────────────────────────────────────────────────
+
+    def submit(self, event) -> None:
+        """Submit from any thread (sync-safe)."""
+        if not self._started.is_set():
+            self.start()
+        self._loop.call_soon_threadsafe(self._queue.put_nowait, event)
+
+    # ── Consumer ─────────────────────────────────────────────────────────
 
     async def _consume_loop(self) -> None:
         while True:
@@ -40,7 +69,7 @@ class ActionEventBus:
             if event is None:
                 return
             try:
-                handled = await self._event_bus.publish(event)
+                handled = await event.session.event_bus.publish(event)
                 if not handled:
                     logger.warning(
                         "action bus: no subscriber handled %r",
@@ -55,24 +84,10 @@ class ActionEventBus:
                 if not event.result_future.done():
                     event.result_future.set_exception(exc)
 
-    def submit(self, event) -> None:
-        """Submit an action event from any thread (sync-safe).
-
-        Uses ``call_soon_threadsafe`` to safely enqueue from the tools.py
-        sync thread onto the bridge loop's queue.
-        """
-        loop = event.session.bridge.loop
-        if loop is None or not loop.is_running():
-            logger.error("action bus: bridge loop not running; cannot submit")
-            if not event.result_future.done():
-                event.result_future.set_result(
-                    {"ok": False, "error": "bridge event loop is not running"}
-                )
-            return
-        loop.call_soon_threadsafe(self._queue.put_nowait, event)
+    # ── Shutdown ─────────────────────────────────────────────────────────
 
     async def shutdown(self) -> None:
-        """Signal the consumer to stop and wait for it."""
+        """Signal the consumer to stop and tear down the loop."""
         if self._consumer is not None:
             try:
                 self._queue.put_nowait(None)
@@ -83,3 +98,19 @@ class ActionEventBus:
             except (asyncio.TimeoutError, Exception):
                 self._consumer.cancel()
             self._consumer = None
+        if self._loop is not None:
+            self._loop.call_soon_threadsafe(self._loop.stop)
+            self._loop = None
+        self._started.clear()
+
+
+# ── Module-level singleton ───────────────────────────────────────────────
+
+_bus: Optional[ActionEventBus] = None
+
+
+def get_action_bus() -> ActionEventBus:
+    global _bus
+    if _bus is None:
+        _bus = ActionEventBus()
+    return _bus

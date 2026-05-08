@@ -10,6 +10,7 @@ import os
 from typing import Any, Callable
 
 from .codex_websocket_v2.core.session_registry import resolve_current_session
+from .codex_websocket_v2.events.action_bus import get_action_bus
 from .codex_websocket_v2.surfaces.tool_actions import (
     error as _error,
     ok as _ok,
@@ -38,7 +39,7 @@ def _submit(
     return a JSON string.  When *on_ok* is ``None`` the default ``ok()``
     response is built from the result dict.
     """
-    session.action_bus.submit(event)
+    get_action_bus().submit(event)
     try:
         result = event.result_future.result(timeout=_RESULT_TIMEOUT)
     except Exception as exc:

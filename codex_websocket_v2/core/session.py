@@ -13,7 +13,6 @@ import logging
 import threading
 from typing import Any, Dict, Optional
 
-from ..events.action_bus import ActionEventBus
 from ..events.action_factory import ActionFactory
 from ..events.bus import EventBus
 from ..surfaces.notify import notify_user
@@ -59,8 +58,6 @@ class CodexSession(
         self.bridge: CodexBridge = CodexBridge(session=self)
         self._start_lock = threading.Lock()
 
-        # Action event bus — serial queue for outbound tool calls
-        self.action_bus = ActionEventBus(self.event_bus)
         self.action_factory = ActionFactory(self)
         self._register_action_subscribers()
 
@@ -126,9 +123,6 @@ class CodexSession(
                 else:
                     logger.warning("codex session: failed to sync default model: %s", sync["error"])
 
-            # Start action bus consumer on the bridge loop
-            self.bridge.run_sync(self.action_bus.start_consumer(), timeout=STARTUP_TIMEOUT)
-
             return ok()
 
     async def ensure_started_async(self) -> Result:
@@ -149,9 +143,6 @@ class CodexSession(
                     self.default_model = sync["model"]
                 else:
                     logger.warning("codex session: failed to sync default model: %s", sync["error"])
-
-            # Start action bus consumer on the bridge loop
-            await self.action_bus.start_consumer()
 
             return ok()
 

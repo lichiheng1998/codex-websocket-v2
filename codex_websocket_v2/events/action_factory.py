@@ -52,9 +52,10 @@ class ActionFactory:
         self.session = session
 
     def _future(self) -> asyncio.Future:
-        loop = self.session.bridge.loop
+        from .action_bus import get_action_bus
+        loop = get_action_bus()._loop
         if loop is None:
-            raise RuntimeError("bridge loop is not running")
+            raise RuntimeError("action bus loop is not running")
         return loop.create_future()
 
     def create(self, tool_name: str, args: dict) -> BaseActionEvent:
