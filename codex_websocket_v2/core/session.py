@@ -51,7 +51,6 @@ class CodexSession(
         self.approval_policy: str = DEFAULT_APPROVAL_POLICY
         self.tasks: Dict[str, Task] = {}
         self._provider: ProviderInfo = ProviderInfo()
-        self.gateway_loop: Optional[asyncio.AbstractEventLoop] = None
         self.event_bus = EventBus()
         from ..events.subscribers import register_default_subscribers
 
@@ -194,4 +193,4 @@ class CodexSession(
         task.request_schema = request_schema
 
     async def notify(self, text: str) -> None:
-        await notify_user(self.target, text, gateway_loop=self.gateway_loop)
+        await notify_user(self.target, text)

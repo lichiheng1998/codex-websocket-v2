@@ -33,22 +33,6 @@ def register(ctx) -> None:
     import logging as _log
     _logger = _log.getLogger(__name__)
 
-    def _propagate_loop_to_sessions(loop) -> None:
-        """Push loop to any existing sessions that don't have one yet."""
-        try:
-            from .codex_websocket_v2.core import session_registry
-            for session in session_registry.all_sessions():
-                if session.gateway_loop is None:
-                    session.gateway_loop = loop
-                    _logger.info(
-                        "codex: [loop-capture] gateway loop propagated to existing session"
-                        " session=%s loop_id=%s",
-                        session.session_key,
-                        id(loop),
-                    )
-        except Exception:
-            pass
-
     def _capture_gateway_loop(**kwargs) -> None:
         """Capture the hermes main loop on every inbound gateway message.
 
@@ -61,9 +45,8 @@ def register(ctx) -> None:
         except RuntimeError:
             return
         if notify._MAIN_LOOP is loop:
-            return  # already captured, skip the propagation scan
+            return
         notify.set_main_loop(loop)
-        _propagate_loop_to_sessions(loop)
 
     def _capture_loop_before_codex_tool(**kwargs) -> None:
         """Secondary capture for CLI mode where pre_gateway_dispatch never fires."""
@@ -77,7 +60,6 @@ def register(ctx) -> None:
         if notify._MAIN_LOOP is loop:
             return
         notify.capture_current_loop(f"pre_tool_call:{tool_name}")
-        _propagate_loop_to_sessions(loop)
 
     ctx.register_hook("pre_gateway_dispatch", _capture_gateway_loop)
     ctx.register_hook("pre_tool_call", _capture_loop_before_codex_tool)
