@@ -46,6 +46,16 @@ def _submit_and_wait(session, event) -> str:
         return _error(str(exc))
 
 
+def _dispatch_event(event_cls, args: dict) -> str:
+    session, err = _resolve_session_or_error()
+    if err is not None:
+        return err
+    if err := _ensure_started(session):
+        return err
+    event = event_cls(session=session, result_future=concurrent.futures.Future(), args=args)
+    return _submit_and_wait(session, event)
+
+
 def _dispatch_action_tool(map_name: str, args: dict) -> str:
     action = (args.get("action") or "").strip()
     if not action:
@@ -83,19 +93,7 @@ def codex_task(args: dict, **kwargs: Any) -> str:
     except ValueError as exc:
         return _error(str(exc))
 
-    session, err = _resolve_session_or_error()
-    if err is not None:
-        return err
-
-    if err := _ensure_started(session):
-        return err
-
-    event = StartTaskEvent(
-        session=session,
-        result_future=concurrent.futures.Future(),
-        args={**args, "prompt": prompt.strip(), "plan": plan},
-    )
-    return _submit_and_wait(session, event)
+    return _dispatch_event(StartTaskEvent, {**args, "prompt": prompt.strip(), "plan": plan})
 
 
 def codex_tasks(args: dict, **kwargs: Any) -> str:
@@ -103,19 +101,7 @@ def codex_tasks(args: dict, **kwargs: Any) -> str:
 
 
 def codex_remove(args: dict, **kwargs: Any) -> str:
-    session, err = _resolve_session_or_error()
-    if err is not None:
-        return err
-
-    if err := _ensure_started(session):
-        return err
-
-    event = RemoveEvent(
-        session=session,
-        result_future=concurrent.futures.Future(),
-        args=args,
-    )
-    return _submit_and_wait(session, event)
+    return _dispatch_event(RemoveEvent, args)
 
 
 def codex_approval(args: dict, **kwargs: Any) -> str:
@@ -145,16 +131,4 @@ def codex_revive(args: dict, **kwargs: Any) -> str:
     except ValueError as exc:
         return _error(str(exc))
 
-    session, err = _resolve_session_or_error()
-    if err is not None:
-        return err
-
-    if err := _ensure_started(session):
-        return err
-
-    event = ReviveEvent(
-        session=session,
-        result_future=concurrent.futures.Future(),
-        args={**args, "plan": plan},
-    )
-    return _submit_and_wait(session, event)
+    return _dispatch_event(ReviveEvent, {**args, "plan": plan})
