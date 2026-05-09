@@ -12,7 +12,7 @@ from .utils import new_task_id
 
 
 class TaskOperationsMixin:
-    def start_task(
+    async def start_task(
         self,
         *,
         cwd: str,
@@ -37,19 +37,15 @@ class TaskOperationsMixin:
             return resolved
         task_id = new_task_id()
 
-        async def _boot() -> None:
-            asyncio.create_task(self._drive_task(
-                task_id=task_id, cwd=cwd, prompt=prompt,
-                model=resolved["model"],
-                plan=resolved["plan"],
-                approval_policy=resolved["approval_policy"],
-                sandbox_policy=resolved["sandbox_policy"],
-                base_instructions=base_instructions,
-            ))
+        asyncio.create_task(self._drive_task(
+            task_id=task_id, cwd=cwd, prompt=prompt,
+            model=resolved["model"],
+            plan=resolved["plan"],
+            approval_policy=resolved["approval_policy"],
+            sandbox_policy=resolved["sandbox_policy"],
+            base_instructions=base_instructions,
+        ))
 
-        boot = self.bridge.run_sync(_boot(), timeout=SHORT_RPC_TIMEOUT)
-        if not boot["ok"]:
-            return boot
         return ok(
             task_id=task_id,
             model=resolved["model"],
@@ -58,7 +54,7 @@ class TaskOperationsMixin:
             approval_policy=resolved["approval_policy"],
         )
 
-    def send_reply(self, task_id: str, message: str) -> Result:
+    async def send_reply(self, task_id: str, message: str) -> Result:
         started = self.ensure_started()
         if not started["ok"]:
             return started
@@ -67,15 +63,10 @@ class TaskOperationsMixin:
         if task is None:
             return err(f"unknown task id {task_id!r}")
 
-        async def _boot() -> None:
-            asyncio.create_task(self._drive_reply(task_id, message))
-
-        boot = self.bridge.run_sync(_boot(), timeout=SHORT_RPC_TIMEOUT)
-        if not boot["ok"]:
-            return boot
+        asyncio.create_task(self._drive_reply(task_id, message))
         return ok(task_id=task_id)
 
-    def steer_task(self, task_id: str, message: str) -> Result:
+    async def steer_task(self, task_id: str, message: str) -> Result:
         started = self.ensure_started()
         if not started["ok"]:
             return started
@@ -92,15 +83,12 @@ class TaskOperationsMixin:
         if not turn_id:
             return err(f"task {task_id!r} has no active turn to steer")
 
-        result = self.bridge.run_sync(
-            self.bridge.rpc(
-                "turn/steer",
-                wire.TurnSteerParams(
-                    threadId=task.thread_id,
-                    expectedTurnId=turn_id,
-                    input=[{"type": "text", "text": message}],
-                ),
-                timeout=SHORT_RPC_TIMEOUT,
+        result = await self.bridge.rpc(
+            "turn/steer",
+            wire.TurnSteerParams(
+                threadId=task.thread_id,
+                expectedTurnId=turn_id,
+                input=[{"type": "text", "text": message}],
             ),
             timeout=SHORT_RPC_TIMEOUT,
         )
@@ -108,7 +96,7 @@ class TaskOperationsMixin:
             return result
         return ok(task_id=task_id, turn_id=turn_id)
 
-    def stop_task(self, task_id: str) -> Result:
+    async def stop_task(self, task_id: str) -> Result:
         started = self.ensure_started()
         if not started["ok"]:
             return started
@@ -121,19 +109,16 @@ class TaskOperationsMixin:
         if not turn_id:
             return err(f"task {task_id!r} has no active turn to stop")
 
-        result = self.bridge.run_sync(
-            self.bridge.rpc(
-                "turn/interrupt",
-                wire.TurnInterruptParams(threadId=task.thread_id, turnId=turn_id),
-                timeout=SHORT_RPC_TIMEOUT,
-            ),
+        result = await self.bridge.rpc(
+            "turn/interrupt",
+            wire.TurnInterruptParams(threadId=task.thread_id, turnId=turn_id),
             timeout=SHORT_RPC_TIMEOUT,
         )
         if not result["ok"]:
             return result
         return ok(task_id=task_id, turn_id=turn_id)
 
-    def revive_task(
+    async def revive_task(
         self,
         thread_id: str,
         *,
@@ -169,8 +154,10 @@ class TaskOperationsMixin:
                 "cannot revive into a different session"
             )
 
-        read = self.bridge.run_sync(
-            self.bridge.rpc("thread/read", wire.ThreadReadParams(threadId=thread_id), timeout=RPC_TIMEOUT),
+        read = await self.bridge.rpc(
+            "thread/read",
+            wire.ThreadReadParams(threadId=thread_id),
+            timeout=RPC_TIMEOUT,
         )
         if not read["ok"]:
             return err(f"thread {thread_id!r} not found: {read['error']}")
@@ -182,16 +169,14 @@ class TaskOperationsMixin:
 
         status = thread_obj.get("status") or {}
         if status.get("type") == "notLoaded":
-            resumed = self.bridge.run_sync(
-                self.bridge.rpc(
-                    "thread/resume",
-                    wire.ThreadResumeParams(
-                        threadId=thread_id,
-                        model=resolved["model"],
-                        approvalPolicy=resolved["approval_policy"],
-                    ),
-                    timeout=RPC_TIMEOUT,
+            resumed = await self.bridge.rpc(
+                "thread/resume",
+                wire.ThreadResumeParams(
+                    threadId=thread_id,
+                    model=resolved["model"],
+                    approvalPolicy=resolved["approval_policy"],
                 ),
+                timeout=RPC_TIMEOUT,
             )
             if not resumed["ok"]:
                 return err(f"thread/resume failed: {resumed['error']}")
@@ -253,7 +238,7 @@ class TaskOperationsMixin:
             for t in self.tasks.values()
         ])
 
-    def list_threads(self, *, limit: Optional[int] = None) -> Result:
+    async def list_threads(self, *, limit: Optional[int] = None) -> Result:
         started = self.ensure_started()
         if not started["ok"]:
             return started
@@ -261,12 +246,14 @@ class TaskOperationsMixin:
         all_threads: list = []
         cursor: Optional[str] = None
         while True:
-            rpc = self.bridge.run_sync(
-                self.bridge.rpc("thread/list", wire.ThreadListParams(cursor=cursor, limit=limit), timeout=RPC_TIMEOUT),
+            result = await self.bridge.rpc(
+                "thread/list",
+                wire.ThreadListParams(cursor=cursor, limit=limit),
+                timeout=RPC_TIMEOUT,
             )
-            if not rpc["ok"]:
-                return rpc
-            server_data = rpc["result"] or {}
+            if not result["ok"]:
+                return result
+            server_data = result["result"] or {}
             page = server_data.get("data") or []
             all_threads.extend(page)
             cursor = server_data.get("nextCursor")
@@ -274,7 +261,7 @@ class TaskOperationsMixin:
                 break
         return ok(data=all_threads)
 
-    def archive_thread(self, thread_id: str) -> Result:
+    async def archive_thread(self, thread_id: str) -> Result:
         started = self.ensure_started()
         if not started["ok"]:
             return started
@@ -287,19 +274,21 @@ class TaskOperationsMixin:
         if owner is not None:
             return err(f"thread {thread_id!r} is bound to an active task; remove the task binding first")
 
-        archived = self.bridge.run_sync(
-            self.bridge.rpc("thread/archive", wire.ThreadArchiveParams(threadId=thread_id), timeout=RPC_TIMEOUT),
+        archived = await self.bridge.rpc(
+            "thread/archive",
+            wire.ThreadArchiveParams(threadId=thread_id),
+            timeout=RPC_TIMEOUT,
         )
         if not archived["ok"]:
             return archived
         return ok(thread_id=thread_id)
 
-    def archive_all_threads(self) -> Result:
+    async def archive_all_threads(self) -> Result:
         started = self.ensure_started()
         if not started["ok"]:
             return {"ok": False, "removed": 0, "skipped": [], "errors": [started["error"]]}
 
-        listed = self.list_threads()
+        listed = await self.list_threads()
         if not listed["ok"]:
             return {"ok": False, "removed": 0, "skipped": [], "errors": [listed["error"]]}
 
@@ -313,8 +302,10 @@ class TaskOperationsMixin:
             if owner is not None:
                 skipped.append({"thread_id": thread_id, "owner": owner})
                 continue
-            archived = self.bridge.run_sync(
-                self.bridge.rpc("thread/archive", wire.ThreadArchiveParams(threadId=thread_id), timeout=RPC_TIMEOUT),
+            archived = await self.bridge.rpc(
+                "thread/archive",
+                wire.ThreadArchiveParams(threadId=thread_id),
+                timeout=RPC_TIMEOUT,
             )
             if archived["ok"]:
                 removed += 1

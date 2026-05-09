@@ -10,7 +10,7 @@ from .state import Result, err, ok
 
 
 class RequestResolutionMixin:
-    def approve_task(self, task_id: str, decision: str, *, for_session: bool = False) -> Result:
+    async def approve_task(self, task_id: str, decision: str, *, for_session: bool = False) -> Result:
         """Resolve a pending command approval or simple elicitation response."""
         task = self.tasks.get(task_id)
         if task is None or task.request_rpc_id is None:
@@ -28,12 +28,9 @@ class RequestResolutionMixin:
             payload = built["payload"]
 
         rpc_id = task.request_rpc_id
-        send = self.bridge.run_sync(
-            self.bridge.ws_send(json.dumps({
-                "jsonrpc": "2.0", "id": rpc_id, "result": payload,
-            })),
-            timeout=SHORT_RPC_TIMEOUT,
-        )
+        send = await self.bridge.ws_send(json.dumps({
+            "jsonrpc": "2.0", "id": rpc_id, "result": payload,
+        }))
         if not send["ok"]:
             return send
 
@@ -42,7 +39,7 @@ class RequestResolutionMixin:
             task.request_payload["decision"] = decision
         return ok(decision=decision)
 
-    def respond_task(self, task_id: str, content: "dict | None" = None) -> Result:
+    async def respond_task(self, task_id: str, content: "dict | None" = None) -> Result:
         """Resolve a pending elicitation request by sending schema data."""
         task = self.tasks.get(task_id)
         if task is None or task.request_rpc_id is None:
@@ -53,12 +50,9 @@ class RequestResolutionMixin:
         payload = {"action": "accept", "content": content}
 
         rpc_id = task.request_rpc_id
-        send = self.bridge.run_sync(
-            self.bridge.ws_send(json.dumps({
-                "jsonrpc": "2.0", "id": rpc_id, "result": payload,
-            })),
-            timeout=SHORT_RPC_TIMEOUT,
-        )
+        send = await self.bridge.ws_send(json.dumps({
+            "jsonrpc": "2.0", "id": rpc_id, "result": payload,
+        }))
         if not send["ok"]:
             return send
 
@@ -67,7 +61,7 @@ class RequestResolutionMixin:
             task.request_payload["decision"] = "respond"
         return ok(task_id=task_id, decision="respond")
 
-    def decline_task(self, task_id: str) -> Result:
+    async def decline_task(self, task_id: str) -> Result:
         """Decline a pending elicitation request."""
         task = self.tasks.get(task_id)
         if task is None or task.request_rpc_id is None:
@@ -78,12 +72,9 @@ class RequestResolutionMixin:
         payload = {"action": "decline", "content": {}}
 
         rpc_id = task.request_rpc_id
-        send = self.bridge.run_sync(
-            self.bridge.ws_send(json.dumps({
-                "jsonrpc": "2.0", "id": rpc_id, "result": payload,
-            })),
-            timeout=SHORT_RPC_TIMEOUT,
-        )
+        send = await self.bridge.ws_send(json.dumps({
+            "jsonrpc": "2.0", "id": rpc_id, "result": payload,
+        }))
         if not send["ok"]:
             return send
 
@@ -92,7 +83,7 @@ class RequestResolutionMixin:
             task.request_payload["decision"] = "decline"
         return ok(task_id=task_id, decision="decline")
 
-    def input_task(
+    async def input_task(
         self,
         task_id: str,
         answer: str = "",
@@ -146,13 +137,10 @@ class RequestResolutionMixin:
             response_payload[str(question_id)] = {"answers": answer_groups[idx]}
 
         rpc_id = task.request_rpc_id
-        send = self.bridge.run_sync(
-            self.bridge.ws_send(json.dumps({
-                "jsonrpc": "2.0", "id": rpc_id,
-                "result": {"answers": response_payload},
-            })),
-            timeout=SHORT_RPC_TIMEOUT,
-        )
+        send = await self.bridge.ws_send(json.dumps({
+            "jsonrpc": "2.0", "id": rpc_id,
+            "result": {"answers": response_payload},
+        }))
         if not send["ok"]:
             return send
 

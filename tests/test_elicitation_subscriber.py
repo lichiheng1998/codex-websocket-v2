@@ -30,8 +30,9 @@ class FakeBridge:
     def __init__(self) -> None:
         self.sent: list[str] = []
 
-    async def ws_send(self, message: str) -> None:
+    async def ws_send(self, message: str) -> dict:
         self.sent.append(message)
+        return {"ok": True}
 
     def run_sync(self, awaitable, timeout=None):
         try:
@@ -600,7 +601,7 @@ def params_payload(params) -> dict:
 def test_steer_task_sends_turn_steer_payload() -> None:
     session, bridge = make_control_session()
 
-    result = session.steer_task("task-1", "please focus tests")
+    result = asyncio.run(session.steer_task("task-1", "please focus tests"))
 
     assert result == {"ok": True, "task_id": "task-1", "turn_id": "turn-1"}
     method, params, _timeout = bridge.calls[0]
@@ -615,7 +616,7 @@ def test_steer_task_sends_turn_steer_payload() -> None:
 def test_stop_task_sends_turn_interrupt_payload() -> None:
     session, bridge = make_control_session()
 
-    result = session.stop_task("task-1")
+    result = asyncio.run(session.stop_task("task-1"))
 
     assert result == {"ok": True, "task_id": "task-1", "turn_id": "turn-1"}
     method, params, _timeout = bridge.calls[0]
@@ -629,7 +630,7 @@ def test_stop_task_sends_turn_interrupt_payload() -> None:
 def test_archive_thread_rejects_bound_thread_without_rpc() -> None:
     session, bridge = make_control_session()
 
-    result = session.archive_thread("thread-1")
+    result = asyncio.run(session.archive_thread("thread-1"))
 
     assert result == {
         "ok": False,
@@ -641,7 +642,7 @@ def test_archive_thread_rejects_bound_thread_without_rpc() -> None:
 def test_archive_thread_sends_thread_archive_for_unbound_thread() -> None:
     session, bridge = make_control_session()
 
-    result = session.archive_thread("thread-2")
+    result = asyncio.run(session.archive_thread("thread-2"))
 
     assert result == {"ok": True, "thread_id": "thread-2"}
     method, params, _timeout = bridge.calls[0]
@@ -653,7 +654,7 @@ def test_archive_all_threads_skips_bound_threads_without_clearing_tasks() -> Non
     session, bridge = make_control_session()
     bridge.thread_pages = [[{"id": "thread-1"}, {"id": "thread-2"}]]
 
-    result = session.archive_all_threads()
+    result = asyncio.run(session.archive_all_threads())
 
     assert result == {
         "ok": True,
@@ -694,13 +695,13 @@ def test_remove_task_and_all_only_unbind_local_tasks() -> None:
 def test_steer_and_stop_validate_task_state() -> None:
     session, bridge = make_control_session(active_turn_id="")
 
-    assert session.steer_task("missing", "hi") == {"ok": False, "error": "unknown task id 'missing'"}
-    assert session.steer_task("task-1", "") == {"ok": False, "error": "message is required for steer"}
-    assert session.steer_task("task-1", "hi") == {
+    assert asyncio.run(session.steer_task("missing", "hi")) == {"ok": False, "error": "unknown task id 'missing'"}
+    assert asyncio.run(session.steer_task("task-1", "")) == {"ok": False, "error": "message is required for steer"}
+    assert asyncio.run(session.steer_task("task-1", "hi")) == {
         "ok": False,
         "error": "task 'task-1' has no active turn to steer",
     }
-    assert session.stop_task("task-1") == {
+    assert asyncio.run(session.stop_task("task-1")) == {
         "ok": False,
         "error": "task 'task-1' has no active turn to stop",
     }
@@ -710,18 +711,8 @@ def test_steer_and_stop_validate_task_state() -> None:
 def test_codex_action_steer_and_stop_route_to_session_methods() -> None:
     session, _bridge = make_control_session()
 
-    steer = json.loads(dispatch_tool_action(
-        "action",
-        session,
-        "steer",
-        {"task_id": "task-1", "message": "please focus tests"},
-    ))
-    stop = json.loads(dispatch_tool_action(
-        "action",
-        session,
-        "stop",
-        {"task_id": "task-1"},
-    ))
+    steer = asyncio.run(session.steer_task("task-1", "please focus tests"))
+    stop = asyncio.run(session.stop_task("task-1"))
 
     assert steer == {"ok": True, "task_id": "task-1", "turn_id": "turn-1"}
     assert stop == {"ok": True, "task_id": "task-1", "turn_id": "turn-1"}
@@ -769,14 +760,9 @@ def test_codex_action_respond_sends_content_not_schema() -> None:
         "includeFood": True,
     }
 
-    result = dispatch_tool_action(
-        "action",
-        session,
-        "respond",
-        {"task_id": "task-1", "content": content},
-    )
+    result = asyncio.run(session.respond_task("task-1", content))
 
-    assert json.loads(result) == {
+    assert result == {
         "ok": True,
         "task_id": "task-1",
         "decision": "respond",
@@ -796,11 +782,10 @@ def test_codex_action_respond_sends_content_not_schema() -> None:
 def test_codex_approval_approve_accepts_elicitation_with_empty_content() -> None:
     session, bridge = make_elicitation_session()
 
-    result = dispatch_tool_action("approval", session, "approve", {"task_id": "task-1"})
+    result = asyncio.run(session.approve_task("task-1", "accept"))
 
-    assert json.loads(result) == {
+    assert result == {
         "ok": True,
-        "task_id": "task-1",
         "decision": "accept",
     }
     assert json.loads(bridge.sent[0]) == {
@@ -818,11 +803,10 @@ def test_codex_approval_approve_accepts_elicitation_with_empty_content() -> None
 def test_codex_approval_deny_declines_elicitation() -> None:
     session, bridge = make_elicitation_session()
 
-    result = dispatch_tool_action("approval", session, "deny", {"task_id": "task-1"})
+    result = asyncio.run(session.approve_task("task-1", "decline"))
 
-    assert json.loads(result) == {
+    assert result == {
         "ok": True,
-        "task_id": "task-1",
         "decision": "decline",
     }
     assert json.loads(bridge.sent[0]) == {

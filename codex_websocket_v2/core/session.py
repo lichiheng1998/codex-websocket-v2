@@ -51,11 +51,14 @@ class CodexSession(
         self._provider: ProviderInfo = ProviderInfo()
         self.gateway_loop: Optional[asyncio.AbstractEventLoop] = None
         self.event_bus = EventBus()
-        from ..events.subscribers import register_default_subscribers
+        from ..events.subscribers import register_default_subscribers, register_action_subscribers
+        from ..events.action_bus import ActionEventBus
 
         register_default_subscribers(self.event_bus, self)
+        register_action_subscribers(self.event_bus, self)
 
         self.bridge: CodexBridge = CodexBridge(session=self)
+        self.action_bus: ActionEventBus = ActionEventBus(self.event_bus)
         self._start_lock = threading.Lock()
 
     # ── Lifecycle ────────────────────────────────────────────────────────────
@@ -77,10 +80,16 @@ class CodexSession(
                     self.default_model = sync["model"]
                 else:
                     logger.warning("codex session: failed to sync default model: %s", sync["error"])
+                self.bridge.run_sync(self.action_bus.start_consumer())
 
             return ok()
 
     def shutdown(self) -> None:
+        if self.bridge.loop and self.bridge.loop.is_running():
+            try:
+                self.bridge.run_sync(self.action_bus.shutdown(), timeout=5.0)
+            except Exception:
+                pass
         try:
             self.bridge.close()
         except Exception:

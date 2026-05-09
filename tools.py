@@ -2,19 +2,24 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import os
 from typing import Any
 
 from .codex_websocket_v2.core.session_registry import resolve_current_session
+from .codex_websocket_v2.events.action_models import (
+    RemoveEvent,
+    ReviveEvent,
+    StartTaskEvent,
+    make_event,
+)
 from .codex_websocket_v2.surfaces.tool_actions import (
-    dispatch_remove_tool,
-    dispatch_tool_action,
     error as _error,
-    ok as _ok,
     optional_str as _optional_str,
-    tool_error_from_result as _tool_error_from_result,
     validate_plan as _validate_plan,
 )
+
+_TOOL_TIMEOUT = 60.0
 
 
 def _resolve_session_or_error():
@@ -24,25 +29,46 @@ def _resolve_session_or_error():
         return None, _error(f"hermes runtime unavailable: {exc}")
 
 
+def _ensure_started(session) -> str | None:
+    started = session.ensure_started()
+    if not started.get("ok"):
+        return _error(started.get("error", "failed to start session"))
+    return None
+
+
+def _submit_and_wait(session, event) -> str:
+    session.action_bus.submit(event)
+    try:
+        return event.result_future.result(timeout=_TOOL_TIMEOUT)
+    except concurrent.futures.TimeoutError:
+        return _error("action timed out after 60 seconds")
+    except Exception as exc:
+        return _error(str(exc))
+
+
 def _dispatch_action_tool(map_name: str, args: dict) -> str:
     action = (args.get("action") or "").strip()
     if not action:
         return _error("action is required")
 
-    session, error = _resolve_session_or_error()
-    if error is not None:
-        return error
-    return dispatch_tool_action(map_name, session, action, args)
+    session, err = _resolve_session_or_error()
+    if err is not None:
+        return err
+
+    if err := _ensure_started(session):
+        return err
+
+    try:
+        event = make_event(map_name, action, session, args)
+    except KeyError:
+        return _error(f"unknown action {action!r}")
+
+    return _submit_and_wait(session, event)
 
 
 def codex_task(args: dict, **kwargs: Any) -> str:
     cwd = args.get("cwd", "")
     prompt = args.get("prompt", "")
-    approval_policy = _optional_str(args, "approval_policy")
-    sandbox_policy = _optional_str(args, "sandbox_policy")
-    model = _optional_str(args, "model")
-    plan = _optional_str(args, "plan")
-    base_instructions = args.get("base_instructions")
 
     if not cwd or not os.path.isabs(cwd):
         return _error("cwd must be an absolute path")
@@ -50,43 +76,26 @@ def codex_task(args: dict, **kwargs: Any) -> str:
         return _error(f"cwd does not exist or is not a directory: {cwd}")
     if not prompt or not prompt.strip():
         return _error("prompt is required")
+
+    plan = _optional_str(args, "plan")
     try:
         plan = _validate_plan(plan)
     except ValueError as exc:
         return _error(str(exc))
 
-    session, error = _resolve_session_or_error()
-    if error is not None:
-        return error
+    session, err = _resolve_session_or_error()
+    if err is not None:
+        return err
 
-    result = session.start_task(
-        cwd=cwd,
-        prompt=prompt.strip(),
-        model=model,
-        plan=plan,
-        approval_policy=approval_policy,
-        sandbox_policy=sandbox_policy,
-        base_instructions=base_instructions,
-    )
-    if not result["ok"]:
-        return _error(f"codex session error: {result['error']}")
+    if err := _ensure_started(session):
+        return err
 
-    task_id = result["task_id"]
-    return _ok(
-        status="started",
-        task_id=task_id,
-        cwd=cwd,
-        model=result.get("model", session.get_default_model()),
-        plan=result.get("plan"),
-        sandbox_policy=result.get("sandbox_policy"),
-        approval_policy=result.get("approval_policy"),
-        message=(
-            f"Codex task {task_id} started in the background. "
-            f"Progress, approval requests, and the final result will be "
-            f"pushed to the current channel as separate messages. "
-            f"You do NOT need to poll — return control to the user."
-        ),
+    event = StartTaskEvent(
+        session=session,
+        result_future=concurrent.futures.Future(),
+        args={**args, "prompt": prompt.strip(), "plan": plan},
     )
+    return _submit_and_wait(session, event)
 
 
 def codex_tasks(args: dict, **kwargs: Any) -> str:
@@ -94,10 +103,19 @@ def codex_tasks(args: dict, **kwargs: Any) -> str:
 
 
 def codex_remove(args: dict, **kwargs: Any) -> str:
-    session, error = _resolve_session_or_error()
-    if error is not None:
-        return error
-    return dispatch_remove_tool(session, args)
+    session, err = _resolve_session_or_error()
+    if err is not None:
+        return err
+
+    if err := _ensure_started(session):
+        return err
+
+    event = RemoveEvent(
+        session=session,
+        result_future=concurrent.futures.Future(),
+        args=args,
+    )
+    return _submit_and_wait(session, event)
 
 
 def codex_approval(args: dict, **kwargs: Any) -> str:
@@ -121,37 +139,22 @@ def codex_revive(args: dict, **kwargs: Any) -> str:
     if not thread_id:
         return _error("thread_id is required")
 
-    approval_policy = _optional_str(args, "approval_policy")
-    sandbox_policy = _optional_str(args, "sandbox_policy")
-    model = _optional_str(args, "model")
     plan = _optional_str(args, "plan")
     try:
         plan = _validate_plan(plan)
     except ValueError as exc:
         return _error(str(exc))
 
-    session, error = _resolve_session_or_error()
-    if error is not None:
-        return error
+    session, err = _resolve_session_or_error()
+    if err is not None:
+        return err
 
-    result = session.revive_task(
-        thread_id,
-        model=model,
-        plan=plan,
-        sandbox_policy=sandbox_policy,
-        approval_policy=approval_policy,
+    if err := _ensure_started(session):
+        return err
+
+    event = ReviveEvent(
+        session=session,
+        result_future=concurrent.futures.Future(),
+        args={**args, "plan": plan},
     )
-    if error := _tool_error_from_result(result):
-        return error
-    return _ok(
-        task_id=result["task_id"],
-        thread_id=result["thread_id"],
-        model=result.get("model", session.get_default_model()),
-        plan=result.get("plan"),
-        sandbox_policy=result.get("sandbox_policy"),
-        approval_policy=result.get("approval_policy"),
-        message=(
-            f"Thread revived as task {result['task_id']}. "
-            f"Use `/codex reply {result['task_id']} <message>` to continue."
-        ),
-    )
+    return _submit_and_wait(session, event)
