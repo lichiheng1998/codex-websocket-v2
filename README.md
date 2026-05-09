@@ -141,6 +141,10 @@ For scoped actions, omit `task_id` to operate on the session default; pass `task
 
 ## Slash Commands
 
+Slash commands are the direct, structured interface for invoking Codex operations. They map one-to-one to tool actions and are ideal when you know exactly what you want to do.
+
+Alternatively, the same operations are exposed as **dispatch tools** (`codex_task`, `codex_action`, `codex_approval`, etc.) that the LLM agent can call on your behalf. This means you can skip the slash commands entirely and just chat naturally — tell the agent what you need in plain language and it will figure out the right tool and parameters. For example, saying *"approve the pending request for my task"* or *"stop the current run and switch to plan mode"* works just as well as typing the equivalent slash commands.
+
 ```
 /codex                                        — list this session's tasks
 /codex list [--threads]                       — list tasks (or all server threads)

@@ -141,6 +141,10 @@ Task 创建时会固定自己的 `model`、`plan`、`sandbox_policy`、`approval
 
 ## 斜杠命令
 
+斜杠命令是调用 Codex 操作的直接、结构化入口，与工具 action 一一对应，适合明确知道要做什么时使用。
+
+同样的操作也以 **dispatch tools** 的形式暴露给 LLM agent（`codex_task`、`codex_action`、`codex_approval` 等）。这意味着你可以完全跳过斜杠命令，直接用自然语言和 agent 聊天 — 告诉 agent 你需要做什么，它会自动判断调用哪个工具、填写哪些参数。比如说"批准我任务的挂起请求"或者"停掉当前运行，切换到 plan 模式"，效果和敲对应的斜杠命令完全一样。
+
 ```
 /codex                                        — 列出当前 session 的 task
 /codex list [--threads]                       — 列出 task（或服务器全部 thread）
